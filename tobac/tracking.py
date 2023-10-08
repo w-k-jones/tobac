@@ -655,9 +655,6 @@ def build_distance_function(min_h1, max_h1, min_h2, max_h2, PBC_flag):
     )
 
 
-import pandas as pd
-
-
 def linking_overlap(
     features: pd.DataFrame,
     segmentation_mask: xr.DataArray,
@@ -674,7 +671,7 @@ def linking_overlap(
     PBC_flag: str = "none",
     min_absolute_overlap: int = 1,
     min_relative_overlap: float = 0.0,
-):
+) -> pd.DataFrame:
     """Perform linking of features using the overlap of the segmented areas
 
     Parameters
@@ -712,7 +709,7 @@ def linking_overlap(
 
     Returns
     -------
-    _type_
+    pd.DataFrame
         _description_
     """
     # Initial values
@@ -735,49 +732,79 @@ def linking_overlap(
         )
 
     # Now remove stub cells
-    if stubs > 1:
-        cell_length = (
-            features_out[features_out.cell != cell_number_unassigned]
-            .groupby(features_out[features_out.cell != cell_number_unassigned].cell)
-            .apply(len)
-        )
-        features_out[
-            np.isin(features_out.cell, cell_length.index[cell_length < stubs])
-        ] = cell_number_unassigned
+    features_out = remove_stubs(features_out, stubs, cell_number_unassigned)
 
     return features_out
 
 
-def linking_overlap_timestep(
-    features,
-    current_step,
-    next_step,
-    current_cell,
-    stub_cell,
-    ranking_method="absolute",
-):
-    """Perform overlap linking for a single timestep
+def remove_stubs(
+    features: pd.DataFrame, stubs: int, cell_number_unassigned: int
+) -> pd.DataFrame:
+    """Remove cells which have fewer than a given number of features
 
     Parameters
     ----------
-    features : _type_
-        _description_
-    current_step : _type_
-        _description_
-    next_step : _type_
-        _description_
-    current_cell : _type_
-        _description_
-    stub_cell : _type_
-        _description_
-    ranking_method : str, optional
-        _description_, by default "absolute"
+    features : pd.DataFrame
+        DataFrame of tracked features
+    stubs : int
+        the minimum number of features for a valid tracked object
+    cell_number_unassigned : int
+        the cell value used to indicate that a feature is not part of trackd
+        cell
 
     Returns
     -------
-    _type_
-        _description_
+    pd.DataFrame
+        DataFrame of tracked features with stub cells removed
     """
+    if stubs > 1:
+        cell_length = (
+            features[features.cell != cell_number_unassigned]
+            .groupby(features[features.cell != cell_number_unassigned].cell)
+            .apply(len)
+        )
+        features[
+            np.isin(features.cell, cell_length.index[cell_length < stubs])
+        ] = cell_number_unassigned
+    return features
+
+
+def linking_overlap_timestep(
+    features: pd.DataFrame,
+    current_step: xr.DataArray,
+    next_step: xr.DataArray,
+    current_cell: int,
+    stub_cell: int,
+    ranking_method: str = "absolute",
+) -> tuple[pd.DataFrame, int]:
+    """Link overlapping features between two consecutive segment masks
+
+    Parameters
+    ----------
+    features : pd.DataFrame
+        Features dataframe
+    current_step : xr.DataArray
+        segment mask for initial time step
+    next_step : xr.DataArray
+        segment mask for next time step
+    current_cell : int
+        value for the next cell label
+    stub_cell : int
+        value given to untracked features
+    ranking_method : str, optional
+        method used to rank overlap links, by default "absolute"
+
+    Returns
+    -------
+    tuple[pd.DataFrame, int]
+        features dataframe with linked cells and updated current_cell value
+
+    Raises
+    ------
+    ValueError
+        if ranking_method is not one of 'absolute', 'relative'
+    """
+    
     current_bins = np.bincount(np.maximum(current_step.data.ravel(), 0))
     cumulative_bins = np.cumsum(current_bins)
     args = np.argsort(np.maximum(current_step.data.ravel(), 0))
@@ -803,7 +830,17 @@ def linking_overlap_timestep(
         )
     )
 
-    rank = np.argsort(link_candidates[:, -1])[::-1]
+    if ranking_method == "absolute":
+        rank = np.argsort(link_candidates[:, -1])[::-1]
+    elif ranking_method == "relative":
+        overlap_proportion = calc_proportional_overlap(
+            link_candidates[:, -1],
+            current_bins[link_candidates[:, 0]],
+            next_bins[link_candidates[:, 1]],
+        )
+        rank = np.argsort(overlap_proportion)[::-1]
+    else:
+        raise ValueError("ranking method must be one of 'absolute', 'relative")
 
     current_step_labels = np.intersect1d(features.feature, current_step)
     current_is_linked = dict(
