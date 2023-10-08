@@ -721,14 +721,26 @@ def linking_overlap(
     current_step = segmentation_mask.isel(time=0)
     next_step = segmentation_mask.isel(time=1)
     features_out, current_cell = linking_overlap_timestep(
-        features_out, current_step, next_step, current_cell, cell_number_unassigned
+        features_out,
+        current_step,
+        next_step,
+        current_cell,
+        cell_number_unassigned,
+        min_relative_overlap=min_relative_overlap,
+        min_absolute_overlap=min_absolute_overlap,
     )
 
     # Repeat for subsequent time steps
     for time_step in range(1, segmentation_mask.time.size - 1):
         current_step, next_step = next_step, segmentation_mask.isel(time=time_step + 1)
         features_out, current_cell = linking_overlap_timestep(
-            features_out, current_step, next_step, current_cell, cell_number_unassigned
+            features_out,
+            current_step,
+            next_step,
+            current_cell,
+            cell_number_unassigned,
+            min_relative_overlap=min_relative_overlap,
+            min_absolute_overlap=min_absolute_overlap,
         )
 
     # Now remove stub cells
@@ -776,6 +788,8 @@ def linking_overlap_timestep(
     current_cell: int,
     stub_cell: int,
     ranking_method: str = "absolute",
+    min_relative_overlap: float = 0,
+    min_absolute_overlap: int = 1,
 ) -> tuple[pd.DataFrame, int]:
     """Link overlapping features between two consecutive segment masks
 
@@ -804,7 +818,7 @@ def linking_overlap_timestep(
     ValueError
         if ranking_method is not one of 'absolute', 'relative'
     """
-    
+
     current_bins = np.bincount(np.maximum(current_step.data.ravel(), 0))
     cumulative_bins = np.cumsum(current_bins)
     args = np.argsort(np.maximum(current_step.data.ravel(), 0))
@@ -821,8 +835,8 @@ def linking_overlap_timestep(
                         args[cumulative_bins[label - 1] : cumulative_bins[label]],
                         next_step.data,
                         next_bins,
-                        0,
-                        1,
+                        min_relative_overlap=min_relative_overlap,
+                        min_absolute_overlap=min_absolute_overlap,
                     )
                     for label in np.intersect1d(features.feature, current_step)
                 ],
