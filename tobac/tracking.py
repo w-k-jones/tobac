@@ -705,7 +705,7 @@ def linking_overlap(
         minimum number of pixels in overlapping labels, by default 1
     min_relative_overlap : float, optional
         minimum proportion of labels to overlap, by default 0
-    
+
     Returns
     -------
     pd.DataFrame
@@ -733,7 +733,7 @@ def linking_overlap(
         cell_number_unassigned,
         min_relative_overlap=min_relative_overlap,
         min_absolute_overlap=min_absolute_overlap,
-        max_dist=max_dist
+        max_dist=max_dist,
     )
 
     # Repeat for subsequent time steps
@@ -747,7 +747,7 @@ def linking_overlap(
             cell_number_unassigned,
             min_relative_overlap=min_relative_overlap,
             min_absolute_overlap=min_absolute_overlap,
-            max_dist=max_dist
+            max_dist=max_dist,
         )
 
     # Now remove stub cells
@@ -864,13 +864,21 @@ def linking_overlap_timestep(
     if np.isfinite(max_dist):
         if max_dist <= 0:
             raise ValueError("max_dist must be a positive value")
-        
+
         features.set_index("feature", drop=False, inplace=True)
 
         # Need to consider lat/lon distance and PBCs
         wh_too_far = (
-            (features.loc[link_candidates[:, 0], "hdim_1"] - features.loc[link_candidates[:, 1], "hdim_2"])**2
-            + (features.loc[link_candidates[:, 0], "hdim_1"].hm1 - features.loc[link_candidates[:, 1], "hdim_2"])**2
+            (
+                features.loc[link_candidates[:, 0], "hdim_1"]
+                - features.loc[link_candidates[:, 1], "hdim_2"]
+            )
+            ** 2
+            + (
+                features.loc[link_candidates[:, 0], "hdim_1"].hm1
+                - features.loc[link_candidates[:, 1], "hdim_2"]
+            )
+            ** 2
         ) > max_dist**2
 
         features.reset_index(drop=True, inplace=True)
