@@ -23,6 +23,7 @@ import logging
 from operator import is_
 import numpy as np
 import pandas as pd
+import xarray as xr
 import warnings
 import math
 from . import utils as tb_utils
@@ -652,3 +653,257 @@ def build_distance_function(min_h1, max_h1, min_h2, max_h2, PBC_flag):
         max_h2=max_h2,
         PBC_flag=PBC_flag,
     )
+
+
+import pandas as pd
+
+
+def linking_overlap(
+    features: pd.DataFrame,
+    segmentation_mask: xr.DataArray,
+    dt: float,
+    dxy: float,
+    dz: float = None,
+    stubs: int = 1,
+    v_max: float = None,
+    d_max: float = None,
+    d_min: float = None,
+    cell_number_start: int = 1,
+    cell_number_unassigned: int = -1,
+    vertical_coord: str = "auto",
+    PBC_flag: str = "none",
+    min_absolute_overlap: int = 1,
+    min_relative_overlap: float = 0.0,
+):
+    """Perform linking of features using the overlap of the segmented areas
+
+    Parameters
+    ----------
+    features : pd.DataFrame
+        _description_
+    segmentation_mask : xr.DataArray
+        _description_
+    dt : float
+        _description_
+    dxy : float
+        _description_
+    dz : float, optional
+        _description_, by default None
+    stubs : int, optional
+        _description_, by default 1
+    v_max : float, optional
+        _description_, by default None
+    d_max : float, optional
+        _description_, by default None
+    d_min : float, optional
+        _description_, by default None
+    cell_number_start : int, optional
+        _description_, by default 1
+    cell_number_unassigned : int, optional
+        _description_, by default -1
+    vertical_coord : str, optional
+        _description_, by default "auto"
+    PBC_flag : str, optional
+        _description_, by default "none"
+    min_absolute_overlap : int, optional
+        _description_, by default 1
+    min_relative_overlap : float, optional
+        _description_, by default 0.
+
+    Returns
+    -------
+    _type_
+        _description_
+    """
+    # Initial values
+    current_cell = int(cell_number_start)
+    features_out = features.copy()
+    features_out["cell"] = np.full([len(features)], cell_number_unassigned, dtype=int)
+
+    # Run initial link
+    current_step = segmentation_mask.isel(time=0)
+    next_step = segmentation_mask.isel(time=1)
+    features_out, current_cell = linking_overlap_timestep(
+        features_out, current_step, next_step, current_cell, cell_number_unassigned
+    )
+
+    # Repeat for subsequent time steps
+    for time_step in range(1, segmentation_mask.time.size - 1):
+        current_step, next_step = next_step, segmentation_mask.isel(time=time_step + 1)
+        features_out, current_cell = linking_overlap_timestep(
+            features_out, current_step, next_step, current_cell, cell_number_unassigned
+        )
+
+    # Now remove stub cells
+    if stubs > 1:
+        cell_length = (
+            features_out[features_out.cell != cell_number_unassigned]
+            .groupby(features_out[features_out.cell != cell_number_unassigned].cell)
+            .apply(len)
+        )
+        features_out[
+            np.isin(features_out.cell, cell_length.index[cell_length < stubs])
+        ] = cell_number_unassigned
+
+    return features_out
+
+
+def linking_overlap_timestep(
+    features,
+    current_step,
+    next_step,
+    current_cell,
+    stub_cell,
+    ranking_method="absolute",
+):
+    """Perform overlap linking for a single timestep
+
+    Parameters
+    ----------
+    features : _type_
+        _description_
+    current_step : _type_
+        _description_
+    next_step : _type_
+        _description_
+    current_cell : _type_
+        _description_
+    stub_cell : _type_
+        _description_
+    ranking_method : str, optional
+        _description_, by default "absolute"
+
+    Returns
+    -------
+    _type_
+        _description_
+    """
+    current_bins = np.bincount(np.maximum(current_step.data.ravel(), 0))
+    cumulative_bins = np.cumsum(current_bins)
+    args = np.argsort(np.maximum(current_step.data.ravel(), 0))
+
+    next_bins = np.bincount(np.maximum(next_step.data.ravel(), 0))
+
+    link_candidates = np.concatenate(
+        list(
+            filter(
+                None,
+                [
+                    find_overlapping_labels(
+                        label,
+                        args[cumulative_bins[label - 1] : cumulative_bins[label]],
+                        next_step.data,
+                        next_bins,
+                        0,
+                        1,
+                    )
+                    for label in np.intersect1d(features.feature, current_step)
+                ],
+            )
+        )
+    )
+
+    rank = np.argsort(link_candidates[:, -1])[::-1]
+
+    current_step_labels = np.intersect1d(features.feature, current_step)
+    current_is_linked = dict(
+        zip(current_step_labels, np.full(current_step_labels.size, False))
+    )
+
+    next_step_labels = np.intersect1d(features.feature, next_step)
+    next_is_linked = dict(zip(next_step_labels, np.full(next_step_labels.size, False)))
+
+    for link in rank:
+        current_label = link_candidates[link, 0]
+        next_label = link_candidates[link, 1]
+        if not current_is_linked[current_label] and not next_is_linked[next_label]:
+            current_is_linked[current_label] = True
+            next_is_linked[next_label] = True
+
+            if features.cell[features.feature == current_label].item() == stub_cell:
+                features.loc[features.feature == current_label, "cell"] = current_cell
+                features.loc[features.feature == next_label, "cell"] = current_cell
+                current_cell += 1
+            else:
+                features.loc[features.feature == next_label, "cell"] = features.loc[
+                    features.feature == current_label, "cell"
+                ].item()
+
+    return features, current_cell
+
+
+def find_overlapping_labels(
+    current_label: int,
+    locs: np.ndarray[int],
+    next_labels: np.ndarray[int],
+    next_bins: np.ndarray[int],
+    min_relative_overlap: float = 0,
+    min_absolute_overlap: int = 1,
+) -> list[list[int]]:
+    """Find which labels overlap at the locations given by locs, accounting for
+    (proportional) overlap and absolute overlap requirements
+
+    Parameters
+    ----------
+    current_label : int
+        the value of the label for which we are finding overlaps
+    locs : np.ndarray[int]
+        array of array locations (ravelled indexes) in which to search for
+        neighbouring labels
+    next_labels : np.ndarray[int]
+        array of labels in which to find neighbours
+    next_bins : np.ndarray[int]
+        array of bin locations for each label in next_labels
+    min_relative_overlap : float, optional
+        minimum proportion of labels to overlap, by default 0
+    min_absolute_overlap : int, optional
+        minimum number of pixels in overlapping labels, by default 1
+
+    Returns
+    -------
+    dict[str, int]
+        dictionary of neighbouring labels with the number of overlapping pixels
+    """
+
+    n_locs = len(locs)
+    if n_locs > 0:
+        overlap_labels = next_labels.ravel()[locs]
+        overlap_bins = np.bincount(np.maximum(overlap_labels, 0))
+        return [
+            [current_label, new_label, overlap_bins[new_label]]
+            for new_label in np.unique(overlap_labels)
+            if new_label != 0
+            and overlap_bins[new_label] >= min_absolute_overlap
+            and calc_proportional_overlap(
+                overlap_bins[new_label], n_locs, next_bins[new_label]
+            )
+            >= min_relative_overlap
+        ]
+    else:
+        return []
+
+
+def calc_proportional_overlap(
+    n_overlapping: int,
+    n_feature1: int,
+    n_feature2: int,
+) -> float:
+    """Calculate the proportional overlap between two labels
+
+    Parameters
+    ----------
+    n_overlapping : int
+        number of overlapping pixels
+    n_feature1 : int
+        number of pixels in feature 1
+    n_feature2 : int
+        number of pixels in feature number 2
+
+    Returns
+    -------
+    float
+        fraction of total pixels which overlap
+    """
+    overlap = 2 * n_overlapping / (n_feature1 + n_feature2)
+
+    return overlap
