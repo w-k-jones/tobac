@@ -925,6 +925,65 @@ def linking_overlap_timestep(
     return features, new_cell_value
 
 
+def project_feature_locs(
+    locs: np.ndarray[int],
+    shape: tuple[int],
+    features: pd.DataFrame,
+    label: int,
+    stub_cell: int = -1,
+    projection_method: None | str = None,
+):
+    # TODO: Add 3D support
+    if projection_method is None:
+        projected_locs = locs
+    elif projection_method == "linear":
+        offset = calc_cell_velocity(
+            features, label, stub_cell=stub_cell, initiation_method=None
+        ).astype(int)
+        unravelled_inds = np.unravel_index(locs, shape)
+        for axis, inds in enumerate(unravelled_inds):
+            inds += offset[axis]
+        # TODO: add PBC support by wrapping -- need to do this separately for hdim_1, hdim_2
+        wh_overhanging = np.logical_or.reduce(
+            [
+                unravelled_inds[0] < 0,
+                unravelled_inds[0] >= shape[0],
+                unravelled_inds[1] < 0,
+                unravelled_inds[1] >= shape[1],
+            ]
+        )
+        projected_locs = np.ravel_multi_index(unravelled_inds, shape, mode="clip")[
+            np.logical_not(wh_overhanging)
+        ]
+    else:
+        raise ValueError("invalid projection method")
+    return projected_locs
+
+
+def calc_cell_velocity(
+    features: pd.DataFrame,
+    label: int,
+    stub_cell: int = -1,
+    initiation_method: None | str = None,
+):
+    # TODO: Add 3D support
+    label_cell = features.loc[label, "cell"].item()
+    if label_cell == stub_cell:
+        if initiation_method is None:
+            cell_velocity = np.array([0, 0])
+        else:
+            raise ValueError("invalid initiation method for cell velocity")
+    else:
+        wh_cell = features.cell == label_cell
+        cell_velocity = np.array(
+            [
+                np.diff(features.loc[wh_cell, "hdim_1"][-2:]),
+                np.diff(features.loc[wh_cell, "hdim_2"][-2:]),
+            ]
+        )
+    return cell_velocity
+
+
 def find_overlapping_labels(
     current_label: int,
     locs: np.ndarray[int],
