@@ -664,7 +664,6 @@ def linking_overlap(
     stubs: int = 1,
     v_max: float = None,
     d_max: float = None,
-    d_min: float = None,
     cell_number_start: int = 1,
     cell_number_unassigned: int = -1,
     vertical_coord: str = "auto",
@@ -703,10 +702,10 @@ def linking_overlap(
     PBC_flag : str, optional
         _description_, by default "none"
     min_absolute_overlap : int, optional
-        _description_, by default 1
+        minimum number of pixels in overlapping labels, by default 1
     min_relative_overlap : float, optional
-        _description_, by default 0.
-
+        minimum proportion of labels to overlap, by default 0
+    
     Returns
     -------
     pd.DataFrame
@@ -716,6 +715,12 @@ def linking_overlap(
     current_cell = int(cell_number_start)
     features_out = features.copy()
     features_out["cell"] = np.full([len(features)], cell_number_unassigned, dtype=int)
+
+    max_dist = np.inf
+    if d_max is not None:
+        max_dist = d_max / dxy
+    if v_max is not None:
+        max_dist = v_max * dt / dxy
 
     # Run initial link
     current_step = segmentation_mask.isel(time=0)
@@ -728,6 +733,7 @@ def linking_overlap(
         cell_number_unassigned,
         min_relative_overlap=min_relative_overlap,
         min_absolute_overlap=min_absolute_overlap,
+        max_dist=max_dist
     )
 
     # Repeat for subsequent time steps
@@ -741,6 +747,7 @@ def linking_overlap(
             cell_number_unassigned,
             min_relative_overlap=min_relative_overlap,
             min_absolute_overlap=min_absolute_overlap,
+            max_dist=max_dist
         )
 
     # Now remove stub cells
@@ -775,8 +782,9 @@ def remove_stubs(
             .groupby(features[features.cell != cell_number_unassigned].cell)
             .apply(len)
         )
-        features[
-            np.isin(features.cell, cell_length.index[cell_length < stubs])
+        features.loc[
+            np.isin(features.cell, cell_length.index[cell_length < stubs]),
+            "cell",
         ] = cell_number_unassigned
     return features
 
@@ -785,11 +793,12 @@ def linking_overlap_timestep(
     features: pd.DataFrame,
     current_step: xr.DataArray,
     next_step: xr.DataArray,
-    current_cell: int,
+    new_cell_value: int,
     stub_cell: int,
     ranking_method: str = "absolute",
     min_relative_overlap: float = 0,
     min_absolute_overlap: int = 1,
+    max_dist: float = np.inf,
 ) -> tuple[pd.DataFrame, int]:
     """Link overlapping features between two consecutive segment masks
 
@@ -801,12 +810,19 @@ def linking_overlap_timestep(
         segment mask for initial time step
     next_step : xr.DataArray
         segment mask for next time step
-    current_cell : int
+    new_cell_value : int
         value for the next cell label
     stub_cell : int
         value given to untracked features
     ranking_method : str, optional
         method used to rank overlap links, by default "absolute"
+    min_relative_overlap : float, optional
+        minimum proportion of labels to overlap, by default 0
+    min_absolute_overlap : int, optional
+        minimum number of pixels in overlapping labels, by default 1
+    max_dist : float, optional
+        maximum distance (in pixels) between the centroids of linked objects, by
+        default np.inf
 
     Returns
     -------
@@ -844,6 +860,23 @@ def linking_overlap_timestep(
         )
     )
 
+    # Filter by max distance
+    if np.isfinite(max_dist):
+        if max_dist <= 0:
+            raise ValueError("max_dist must be a positive value")
+        
+        features.set_index("feature", drop=False, inplace=True)
+
+        # Need to consider lat/lon distance and PBCs
+        wh_too_far = (
+            (features.loc[link_candidates[:, 0], "hdim_1"] - features.loc[link_candidates[:, 1], "hdim_2"])**2
+            + (features.loc[link_candidates[:, 0], "hdim_1"].hm1 - features.loc[link_candidates[:, 1], "hdim_2"])**2
+        ) > max_dist**2
+
+        features.reset_index(drop=True, inplace=True)
+
+        link_candidates = link_candidates[np.logical_not(wh_too_far)]
+
     if ranking_method == "absolute":
         rank = np.argsort(link_candidates[:, -1])[::-1]
     elif ranking_method == "relative":
@@ -871,16 +904,17 @@ def linking_overlap_timestep(
             current_is_linked[current_label] = True
             next_is_linked[next_label] = True
 
-            if features.cell[features.feature == current_label].item() == stub_cell:
-                features.loc[features.feature == current_label, "cell"] = current_cell
-                features.loc[features.feature == next_label, "cell"] = current_cell
-                current_cell += 1
+            current_cell = features.loc[
+                features.feature == current_label, "cell"
+            ].item()
+            if current_cell == stub_cell:
+                features.loc[features.feature == current_label, "cell"] = new_cell_value
+                features.loc[features.feature == next_label, "cell"] = new_cell_value
+                new_cell_value += 1
             else:
-                features.loc[features.feature == next_label, "cell"] = features.loc[
-                    features.feature == current_label, "cell"
-                ].item()
+                features.loc[features.feature == next_label, "cell"] = current_cell
 
-    return features, current_cell
+    return features, new_cell_value
 
 
 def find_overlapping_labels(
