@@ -661,56 +661,69 @@ def linking_overlap(
     dt: float,
     dxy: float,
     dz: float = None,
-    stubs: int = 1,
     v_max: float = None,
     d_max: float = None,
+    stubs: int = 1,
     cell_number_start: int = 1,
     cell_number_unassigned: int = -1,
     vertical_coord: str = "auto",
     PBC_flag: str = "none",
     min_absolute_overlap: int = 1,
     min_relative_overlap: float = 0.0,
+    projection_method: None | str = None,
 ) -> pd.DataFrame:
     """Perform linking of features using the overlap of the segmented areas
 
     Parameters
     ----------
     features : pd.DataFrame
-        _description_
+        Detected features to be linked.
     segmentation_mask : xr.DataArray
-        _description_
+        Segmentationb mask of the features to be tracked
     dt : float
-        _description_
+        Time resolution of tracked features in seconds.
     dxy : float
-        _description_
+        Horizontal grid spacing of the input data in meters.
     dz : float, optional
-        _description_, by default None
-    stubs : int, optional
-        _description_, by default 1
+        Vertical grid spacing (m), by default None
     v_max : float, optional
-        _description_, by default None
+        Maximum speed of linked features in m/s, by default None
     d_max : float, optional
-        _description_, by default None
-    d_min : float, optional
-        _description_, by default None
+        Maximum distance moved by linked features in one time step in meters, by
+        default None
+    stubs : int, optional
+        Minimum number of time steps that a cell must be tracked over for it to
+        be considered valid, by default 1
     cell_number_start : int, optional
-        _description_, by default 1
+        Cell number for first tracked cell, by default 1
     cell_number_unassigned : int, optional
-        _description_, by default -1
+        Value to set the unassigned/non-tracked cells, by default -1
     vertical_coord : str, optional
-        _description_, by default "auto"
+        Name of the vertical coordinate, by default "auto"
     PBC_flag : str, optional
-        _description_, by default "none"
+        Sets whether to use periodic boundaries, and if so in which directions,
+        by default "none"
     min_absolute_overlap : int, optional
         minimum number of pixels in overlapping labels, by default 1
     min_relative_overlap : float, optional
         minimum proportion of labels to overlap, by default 0
+    projection_method : None | str, optional
+        Method to project the segment locations of features into the next time-
+        step. If linear, will use the motion of the cell in the last tracked
+        step. By default None
 
     Returns
     -------
     pd.DataFrame
-        _description_
+        Dataframe of the linked features, containing the variable 'cell'
     """
+
+    if PBC_flag in ["hdim_1", "hdim_2", "both"] and projection_method is not None:
+        raise ValueError("PBC not yet supported with motion projection")
+
+    if "vdim" in features and projection_method is not None:
+        raise ValueError("3D tracking not yet supported with motion projection")
+
     # Initial values
     current_cell = int(cell_number_start)
     features_out = features.copy()
@@ -722,7 +735,7 @@ def linking_overlap(
     if v_max is not None:
         max_dist = v_max * dt / dxy
 
-    # Run initial link
+    # Run initial link with no projection method
     current_step = segmentation_mask.isel(time=0)
     next_step = segmentation_mask.isel(time=1)
     features_out, current_cell = linking_overlap_timestep(
@@ -736,8 +749,16 @@ def linking_overlap(
         max_dist=max_dist,
     )
 
+    # TODO: If using motion projection we should repeat the first step so that
+    # we get initial estimates for cell motion
+
+    if projection_method is not None:
+        start_step = 0
+    else:
+        start_step = 1
+
     # Repeat for subsequent time steps
-    for time_step in range(1, segmentation_mask.time.size - 1):
+    for time_step in range(start_step, segmentation_mask.time.size - 1):
         current_step, next_step = next_step, segmentation_mask.isel(time=time_step + 1)
         features_out, current_cell = linking_overlap_timestep(
             features_out,
@@ -748,6 +769,7 @@ def linking_overlap(
             min_relative_overlap=min_relative_overlap,
             min_absolute_overlap=min_absolute_overlap,
             max_dist=max_dist,
+            projection_method=projection_method,
         )
 
     # Now remove stub cells
@@ -799,6 +821,7 @@ def linking_overlap_timestep(
     min_relative_overlap: float = 0,
     min_absolute_overlap: int = 1,
     max_dist: float = np.inf,
+    projection_method: None | str = None,
 ) -> tuple[pd.DataFrame, int]:
     """Link overlapping features between two consecutive segment masks
 
@@ -847,7 +870,14 @@ def linking_overlap_timestep(
             [
                 find_overlapping_labels(
                     label,
-                    args[cumulative_bins[label - 1] : cumulative_bins[label]],
+                    project_feature_locs(
+                        args[cumulative_bins[label - 1] : cumulative_bins[label]],
+                        current_step.shape,
+                        features,
+                        label,
+                        stub_cell=stub_cell,
+                        projection_method=projection_method,
+                    ),
                     next_step.data,
                     next_bins,
                     min_relative_overlap=min_relative_overlap,
