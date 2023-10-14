@@ -330,3 +330,6 @@ def test_linking_overlap() -> None:
     assert np.all(
         linking_overlap(test_features, test_segments, 300, 1, stubs=4).cell == -1
     )
+
+    # Check that we do not modify the input features dataframe
+    assert "cell" not in test_features
