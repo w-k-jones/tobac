@@ -1,8 +1,20 @@
+"""
+Tests for overlap tracking
+"""
 import numpy as np
-from tobac.tracking import calc_proportional_overlap, find_overlapping_labels
+import pandas as pd
+import xarray as xr
+import tobac.testing
+
+
+# Test import
+def test_import() -> None:
+    import tobac.tracking
 
 
 def test_calc_proportional_overlap():
+    from tobac.tracking import calc_proportional_overlap
+
     assert calc_proportional_overlap(10, 10, 10) == 1
     assert calc_proportional_overlap(0, 10, 10) == 0
     assert calc_proportional_overlap(5, 10, 10) == 0.5
@@ -21,6 +33,8 @@ def test_calc_proportional_overlap():
 
 
 def test_find_overlapping_labels():
+    from tobac.tracking import find_overlapping_labels
+
     test_labels = np.zeros([4, 6], dtype=int)
     test_labels[1:3, 1:3] = 1
     test_labels[3:4, 3:5] = 2
@@ -174,4 +188,145 @@ def test_find_overlapping_labels():
     assert (
         find_overlapping_labels(1, locs_array[1:1, 1:1].ravel(), test_labels, test_bins)
         == []
+    )
+
+
+def test_remove_stubs() -> None:
+    from tobac.tracking import remove_stubs
+
+    test_features = pd.DataFrame({"cell": [1, 1, 1]})
+
+    assert np.all(remove_stubs(test_features, 1, -1).cell == 1)
+    assert np.all(remove_stubs(test_features, 3, -1).cell == 1)
+    assert np.all(remove_stubs(test_features, 4, -1).cell == -1)
+
+    test_features = pd.DataFrame({"cell": [1, 1, 2, 2, 2]})
+    assert np.all(
+        remove_stubs(test_features, 3, 999).cell == np.array([999, 999, 2, 2, 2])
+    )
+
+
+def test_linking_overlap_timestep() -> None:
+    from tobac.tracking import linking_overlap_timestep
+
+    test_features = tobac.testing.generate_single_feature(
+        5,
+        5,
+        min_h1=0,
+        max_h1=10,
+        min_h2=0,
+        max_h2=15,
+        frame_start=0,
+        num_frames=2,
+        spd_h1=0,
+        spd_h2=0,
+        PBC_flag="none",
+    )
+
+    test_features["cell"] = [-1, -1]
+
+    test_current_step = np.zeros([10, 15], dtype=np.int64)
+    test_current_step[4:7, 4:7] = 1
+    test_current_step = xr.DataArray(test_current_step, dims=("hdim_1", "hdim_2"))
+
+    test_next_step = np.zeros([10, 15], dtype=np.int64)
+    test_next_step[4:7, 4:7] = 2
+    test_next_step = xr.DataArray(test_next_step, dims=("hdim_1", "hdim_2"))
+
+    # Test min_absolute_overlap
+    assert np.all(
+        linking_overlap_timestep(
+            test_features.copy(), test_current_step, test_next_step, 1, -1
+        )[0].cell
+        == 1
+    )
+    assert np.all(
+        linking_overlap_timestep(
+            test_features.copy(),
+            test_current_step,
+            test_next_step,
+            1,
+            -1,
+            min_absolute_overlap=10,
+        )[0].cell
+        == -1
+    )
+
+    # Test min_relative_overlap
+    test_next_step = np.zeros([10, 15], dtype=np.int64)
+    test_next_step[4:7, 5:8] = 2
+    test_next_step = xr.DataArray(test_next_step, dims=("hdim_1", "hdim_2"))
+
+    # relative overlap should be 2/3
+    assert np.all(
+        linking_overlap_timestep(
+            test_features.copy(),
+            test_current_step,
+            test_next_step,
+            2,
+            -1,
+            min_relative_overlap=0.66,
+        )[0].cell
+        == 2
+    )
+    assert np.all(
+        linking_overlap_timestep(
+            test_features.copy(),
+            test_current_step,
+            test_next_step,
+            2,
+            -1,
+            min_relative_overlap=0.67,
+        )[0].cell
+        == -1
+    )
+
+    # Test max_dist
+    test_features.loc[1, ["hdim_2"]] = 10
+    assert np.all(
+        linking_overlap_timestep(
+            test_features.copy(), test_current_step, test_next_step, 3, -1, max_dist=6
+        )[0].cell
+        == 3
+    )
+    assert np.all(
+        linking_overlap_timestep(
+            test_features.copy(), test_current_step, test_next_step, 3, -1, max_dist=4
+        )[0].cell
+        == -1
+    )
+
+
+def test_linking_overlap() -> None:
+    from tobac.tracking import linking_overlap
+
+    test_features = tobac.testing.generate_single_feature(
+        5,
+        5,
+        min_h1=0,
+        max_h1=10,
+        min_h2=0,
+        max_h2=15,
+        frame_start=0,
+        num_frames=3,
+        spd_h1=0,
+        spd_h2=0,
+        PBC_flag="none",
+    )
+
+    test_step1 = np.zeros([10, 15], dtype=np.int64)
+    test_step1[4:7, 4:7] = 1
+
+    test_step2 = np.zeros([10, 15], dtype=np.int64)
+    test_step2[4:7, 4:7] = 2
+
+    test_step3 = np.zeros([10, 15], dtype=np.int64)
+    test_step3[4:7, 4:7] = 3
+
+    test_segments = np.stack([test_step1, test_step2, test_step3], 0)
+    test_segments = xr.DataArray(test_segments, dims=("time", "hdim_1", "hdim_2"))
+
+    assert np.all(linking_overlap(test_features, test_segments, 300, 1).cell == 1)
+    assert np.all(
+        linking_overlap(test_features, test_segments, 300, 1, stubs=4).cell == -1
     )

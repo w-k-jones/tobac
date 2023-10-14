@@ -841,86 +841,93 @@ def linking_overlap_timestep(
 
     next_bins = np.bincount(np.maximum(next_step.data.ravel(), 0))
 
-    link_candidates = np.concatenate(
-        list(
-            filter(
-                None,
-                [
-                    find_overlapping_labels(
-                        label,
-                        args[cumulative_bins[label - 1] : cumulative_bins[label]],
-                        next_step.data,
-                        next_bins,
-                        min_relative_overlap=min_relative_overlap,
-                        min_absolute_overlap=min_absolute_overlap,
-                    )
-                    for label in np.intersect1d(features.feature, current_step)
-                ],
-            )
+    link_candidates = list(
+        filter(
+            None,
+            [
+                find_overlapping_labels(
+                    label,
+                    args[cumulative_bins[label - 1] : cumulative_bins[label]],
+                    next_step.data,
+                    next_bins,
+                    min_relative_overlap=min_relative_overlap,
+                    min_absolute_overlap=min_absolute_overlap,
+                )
+                for label in np.intersect1d(features.feature, current_step)
+            ],
         )
     )
 
-    # Filter by max distance
-    if np.isfinite(max_dist):
-        if max_dist <= 0:
-            raise ValueError("max_dist must be a positive value")
+    if link_candidates:
+        link_candidates = np.concatenate(link_candidates)
 
-        features.set_index("feature", drop=False, inplace=True)
+        # Filter by max distance
+        if np.isfinite(max_dist):
+            if max_dist <= 0:
+                raise ValueError("max_dist must be a positive value")
 
-        # Need to consider lat/lon distance and PBCs
-        wh_too_far = (
-            (
-                features.loc[link_candidates[:, 0], "hdim_1"]
-                - features.loc[link_candidates[:, 1], "hdim_2"]
+            features.set_index("feature", drop=False, inplace=True)
+
+            # Need to consider lat/lon distance and PBCs
+            wh_within_max_dist = (
+                (
+                    features.loc[link_candidates[:, 0], "hdim_1"].to_numpy()
+                    - features.loc[link_candidates[:, 1], "hdim_1"].to_numpy()
+                )
+                ** 2
+                + (
+                    features.loc[link_candidates[:, 0], "hdim_2"].to_numpy()
+                    - features.loc[link_candidates[:, 1], "hdim_2"].to_numpy()
+                )
+                ** 2
+            ) <= max_dist**2
+
+            features.reset_index(drop=True, inplace=True)
+
+            link_candidates = link_candidates[wh_within_max_dist]
+
+        if ranking_method == "absolute":
+            rank = np.argsort(link_candidates[:, -1])[::-1]
+        elif ranking_method == "relative":
+            overlap_proportion = calc_proportional_overlap(
+                link_candidates[:, -1],
+                current_bins[link_candidates[:, 0]],
+                next_bins[link_candidates[:, 1]],
             )
-            ** 2
-            + (
-                features.loc[link_candidates[:, 0], "hdim_1"].hm1
-                - features.loc[link_candidates[:, 1], "hdim_2"]
-            )
-            ** 2
-        ) > max_dist**2
+            rank = np.argsort(overlap_proportion)[::-1]
+        else:
+            raise ValueError("ranking method must be one of 'absolute', 'relative")
 
-        features.reset_index(drop=True, inplace=True)
-
-        link_candidates = link_candidates[np.logical_not(wh_too_far)]
-
-    if ranking_method == "absolute":
-        rank = np.argsort(link_candidates[:, -1])[::-1]
-    elif ranking_method == "relative":
-        overlap_proportion = calc_proportional_overlap(
-            link_candidates[:, -1],
-            current_bins[link_candidates[:, 0]],
-            next_bins[link_candidates[:, 1]],
+        current_step_labels = np.intersect1d(features.feature, current_step)
+        current_is_linked = dict(
+            zip(current_step_labels, np.full(current_step_labels.size, False))
         )
-        rank = np.argsort(overlap_proportion)[::-1]
-    else:
-        raise ValueError("ranking method must be one of 'absolute', 'relative")
 
-    current_step_labels = np.intersect1d(features.feature, current_step)
-    current_is_linked = dict(
-        zip(current_step_labels, np.full(current_step_labels.size, False))
-    )
+        next_step_labels = np.intersect1d(features.feature, next_step)
+        next_is_linked = dict(
+            zip(next_step_labels, np.full(next_step_labels.size, False))
+        )
 
-    next_step_labels = np.intersect1d(features.feature, next_step)
-    next_is_linked = dict(zip(next_step_labels, np.full(next_step_labels.size, False)))
+        for link in rank:
+            current_label = link_candidates[link, 0]
+            next_label = link_candidates[link, 1]
+            if not current_is_linked[current_label] and not next_is_linked[next_label]:
+                current_is_linked[current_label] = True
+                next_is_linked[next_label] = True
 
-    for link in rank:
-        current_label = link_candidates[link, 0]
-        next_label = link_candidates[link, 1]
-        if not current_is_linked[current_label] and not next_is_linked[next_label]:
-            current_is_linked[current_label] = True
-            next_is_linked[next_label] = True
-
-            current_cell = features.loc[
-                features.feature == current_label, "cell"
-            ].item()
-            if current_cell == stub_cell:
-                features.loc[features.feature == current_label, "cell"] = new_cell_value
-                features.loc[features.feature == next_label, "cell"] = new_cell_value
-                new_cell_value += 1
-            else:
-                features.loc[features.feature == next_label, "cell"] = current_cell
+                current_cell = features.loc[
+                    features.feature == current_label, "cell"
+                ].item()
+                if current_cell == stub_cell:
+                    features.loc[
+                        features.feature == current_label, "cell"
+                    ] = new_cell_value
+                    features.loc[
+                        features.feature == next_label, "cell"
+                    ] = new_cell_value
+                    new_cell_value += 1
+                else:
+                    features.loc[features.feature == next_label, "cell"] = current_cell
 
     return features, new_cell_value
 
@@ -932,7 +939,36 @@ def project_feature_locs(
     label: int,
     stub_cell: int = -1,
     projection_method: None | str = None,
-):
+) -> np.ndarray[int]:
+    """project the locations of a features segmentation mask according to the
+    velocity of the feature
+
+    Parameters
+    ----------
+    locs : np.ndarray[int]
+        the array of (ravelled) array locations of the segment
+    shape : tuple[int]
+        the shape of the dataset
+    features : pd.DataFrame
+        the features dataframe, including the feature to project
+    label : int
+        the label of the feature/segment to be projected
+    stub_cell : int, optional
+        the value used to represent a stub cell, by default -1
+    projection_method : None | str, optional
+        the method use to calculate the projection, out of None, 'linear', by
+        default None
+
+    Returns
+    -------
+    np.ndarray[int]
+        the array of projected (ravelled) array locations of the segment
+
+    Raises
+    ------
+    ValueError
+        if 'projection_method' is not a valid option
+    """
     # TODO: Add 3D support
     if projection_method is None:
         projected_locs = locs
