@@ -71,7 +71,7 @@ from .utils import mask_features, mask_features_surface, mask_cube_features
 
 from .utils import add_coordinates, get_spacings
 from .feature_detection import feature_detection_multithreshold
-from .tracking import linking_trackpy
+from .tracking.tracking_trackpy import linking_trackpy
 from .wrapper import maketrack
 from .wrapper import tracking_wrapper
 from . import merge_split

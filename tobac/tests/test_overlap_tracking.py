@@ -9,11 +9,11 @@ import tobac.testing
 
 # Test import
 def test_import() -> None:
-    import tobac.tracking
+    import tobac.tracking.tracking_overlap
 
 
 def test_calc_proportional_overlap():
-    from tobac.tracking import calc_proportional_overlap
+    from tobac.tracking.tracking_overlap import calc_proportional_overlap
 
     assert calc_proportional_overlap(10, 10, 10) == 1
     assert calc_proportional_overlap(0, 10, 10) == 0
@@ -33,7 +33,7 @@ def test_calc_proportional_overlap():
 
 
 def test_find_overlapping_labels():
-    from tobac.tracking import find_overlapping_labels
+    from tobac.tracking.tracking_overlap import find_overlapping_labels
 
     test_labels = np.zeros([4, 6], dtype=int)
     test_labels[1:3, 1:3] = 1
@@ -192,7 +192,7 @@ def test_find_overlapping_labels():
 
 
 def test_remove_stubs() -> None:
-    from tobac.tracking import remove_stubs
+    from tobac.tracking.tracking_overlap import remove_stubs
 
     test_features = pd.DataFrame({"cell": [1, 1, 1]})
 
@@ -207,7 +207,7 @@ def test_remove_stubs() -> None:
 
 
 def test_linking_overlap_timestep() -> None:
-    from tobac.tracking import linking_overlap_timestep
+    from tobac.tracking.tracking_overlap import linking_overlap_timestep
 
     test_features = tobac.testing.generate_single_feature(
         5,
@@ -298,7 +298,7 @@ def test_linking_overlap_timestep() -> None:
 
 
 def test_linking_overlap() -> None:
-    from tobac.tracking import linking_overlap
+    from tobac.tracking.tracking_overlap import linking_overlap
 
     test_features = tobac.testing.generate_single_feature(
         5,

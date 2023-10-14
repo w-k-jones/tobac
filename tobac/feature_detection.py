@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import KDTree
 from sklearn.neighbors import BallTree
-from tobac.tracking import build_distance_function
+from tobac.tracking.tracking_trackpy import build_distance_function
 from tobac.utils import internal as internal_utils
 from tobac.utils import periodic_boundaries as pbc_utils
 from tobac.utils.general import spectral_filtering

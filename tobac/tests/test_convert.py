@@ -255,7 +255,7 @@ def test_xarray_workflow():
     assert (mask.data == mask_xarray.to_iris().data).all()
 
     # testing tracking
-    tracking_xarray = xarray_to_iris(tobac.tracking.linking_trackpy)
+    tracking_xarray = xarray_to_iris(tobac.tracking.tracking_trackpy.linking_trackpy)
     track = tobac.tracking.linking_trackpy(features, data, dt, dxy, v_max=100.0)
     track_xarray = tracking_xarray(
         features_xarray, data_xarray, dt_xarray, dxy_xarray, v_max=100.0
