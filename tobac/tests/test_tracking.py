@@ -278,7 +278,9 @@ def test_build_distance_function():
     that this produces an object that is suitable to call from trackpy
     """
 
-    test_func = tobac.tracking.tracking_trackpy.build_distance_function(0, 10, 0, 10, "both")
+    test_func = tobac.tracking.tracking_trackpy.build_distance_function(
+        0, 10, 0, 10, "both"
+    )
     assert test_func(np.array((0, 9, 9)), np.array((0, 0, 0))) == pytest.approx(
         1.4142135
     )

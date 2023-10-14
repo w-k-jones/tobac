@@ -653,4 +653,3 @@ def build_distance_function(min_h1, max_h1, min_h2, max_h2, PBC_flag):
         max_h2=max_h2,
         PBC_flag=PBC_flag,
     )
-
