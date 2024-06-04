@@ -16,6 +16,7 @@ References
    diverse datasets. Geoscientific Model Development,
    12(11), 4551-4570.
 """
+
 from __future__ import annotations
 from typing import Union, Callable
 import warnings
@@ -30,8 +31,9 @@ from sklearn.neighbors import BallTree
 import iris
 import xarray as xr
 
-from tobac.tracking import build_distance_function
 from tobac.utils import internal as internal_utils
+from tobac.utils import decorators
+
 from tobac.utils import periodic_boundaries as pbc_utils
 from tobac.utils.general import spectral_filtering
 from tobac.utils import get_statistics
@@ -288,12 +290,12 @@ def remove_parents(
         Dataframe containing detected features.
 
     regions_i : dict
-        Dictionary containing the regions above/below
+        Dictionary containing the regions greater/lower than and equal to
         threshold for the newly detected feature
         (feature ids as keys).
 
     regions_old : dict
-        Dictionary containing the regions above/below
+        Dictionary containing the regions greater/lower than and equal to
         threshold from previous threshold
         (feature ids as keys).
 
@@ -405,8 +407,10 @@ def feature_detection_threshold(
         Number of the current timestep.
 
     threshold : float, optional
-        Threshold value used to select target regions to track. Default
-                is None.
+        Threshold value used to select target regions to track.  The feature detection is inclusive of the
+        threshold value(s), i.e. values greater/less than or equal are included in the target region. The
+        feature detection is inclusive of the threshold value(s), i.e. values greater/less than or equal are
+        included in the target region. Default is None.
 
     target : {'maximum', 'minimum'}, optional
         Flag to determine if tracking is targetting minima or maxima
@@ -421,14 +425,14 @@ def feature_detection_threshold(
         Standard deviation for intial filtering step. Default is 0.5.
 
     n_erosion_threshold: int, optional
-        Number of pixel by which to erode the identified features.
+        Number of pixels by which to erode the identified features.
         Default is 0.
 
     n_min_threshold : int, optional
-        Minimum number of identified features. Default is 0.
+        Minimum number of identified contiguous pixels for a feature to be detected. Default is 0.
 
     min_distance : float, optional
-        Minimum distance between detected features (in meter). Default is 0.
+        Minimum distance between detected features (in meters). Default is 0.
 
     idx_start : int, optional
         Feature id to start with. Default is 0.
@@ -919,8 +923,7 @@ def feature_detection_multithreshold_timestep(
         Number of the current timestep.
 
     threshold : list of floats, optional
-        Threshold value used to select target regions to track. Default
-        is None.
+        Threshold value used to select target regions to track. The feature detection is inclusive of the threshold value(s), i.e. values greater/less than or equal are included in the target region. Default is None.
 
     min_num : int, optional
         This parameter is not used in the function. Default is 0.
@@ -938,14 +941,14 @@ def feature_detection_multithreshold_timestep(
         Standard deviation for intial filtering step. Default is 0.5.
 
     n_erosion_threshold: int, optional
-        Number of pixel by which to erode the identified features.
+        Number of pixels by which to erode the identified features.
         Default is 0.
 
     n_min_threshold : int, optional
-        Minimum number of identified features. Default is 0.
+        Minimum number of identified contiguous pixels for a feature to be detected. Default is 0.
 
     min_distance : float, optional
-        Minimum distance between detected features (in meter). Default is 0.
+        Minimum distance between detected features (in meters). Default is 0.
 
     feature_number_start : int, optional
         Feature id to start with. Default is 1.
@@ -960,10 +963,10 @@ def feature_detection_multithreshold_timestep(
     vertical_axis: int
         The vertical axis number of the data.
     dxy : float
-        Grid spacing in meter.
+        Grid spacing in meters.
 
     wavelength_filtering: tuple, optional
-       Minimum and maximum wavelength for spectral filtering in meter. Default is None.
+       Minimum and maximum wavelength for spectral filtering in meters. Default is None.
 
     strict_thresholding: Bool, optional
         If True, a feature can only be detected if all previous thresholds have been met.
@@ -1124,6 +1127,7 @@ def feature_detection_multithreshold_timestep(
     return features_thresholds
 
 
+@decorators.xarray_to_iris()
 def feature_detection_multithreshold(
     field_in: iris.cube.Cube,
     dxy: float = None,
@@ -1161,8 +1165,8 @@ def feature_detection_multithreshold(
         Grid spacing of the input data (in meter).
 
     thresholds : list of floats, optional
-        Threshold values used to select target regions to track.
-        Default is None.
+        Threshold values used to select target regions to track. The feature detection is inclusive of the threshold value(s), i.e. values
+        greater/less than or equal are included in the target region. Default is None.
 
     target : {'maximum', 'minimum'}, optional
         Flag to determine if tracking is targetting minima or maxima in
@@ -1173,25 +1177,18 @@ def feature_detection_multithreshold(
         Flag choosing method used for the position of the tracked
         feature. Default is 'center'.
 
-    coord_interp_kind : str, optional
-        The kind of interpolation for coordinates. Default is 'linear'.
-        For 1d interp, {'linear', 'nearest', 'nearest-up', 'zero',
-                        'slinear', 'quadratic', 'cubic',
-                        'previous', 'next'}.
-        For 2d interp, {'linear', 'cubic', 'quintic'}.
-
     sigma_threshold: float, optional
         Standard deviation for intial filtering step. Default is 0.5.
 
     n_erosion_threshold: int, optional
-        Number of pixel by which to erode the identified features.
+        Number of pixels by which to erode the identified features.
         Default is 0.
 
     n_min_threshold : int, optional
-        Minimum number of identified features. Default is 0.
+        Minimum number of identified contiguous pixels for a feature to be detected. Default is 0.
 
     min_distance : float, optional
-        Minimum distance between detected features (in meter). Default is 0.
+        Minimum distance between detected features (in meters). Default is 0.
 
     feature_number_start : int, optional
         Feature id to start with. Default is 1.
@@ -1440,15 +1437,15 @@ def filter_min_distance(
     features:      pandas DataFrame
                    features
     dxy:           float
-        Constant horzontal grid spacing (m).
+        Constant horzontal grid spacing (meters).
     dz: float
-        Constant vertical grid spacing (m), optional. If not specified
+        Constant vertical grid spacing (meters), optional. If not specified
         and the input is 3D, this function requires that `z_coordinate_name` is available
         in the `features` input. If you specify a value here, this function assumes
         that it is the constant z spacing between points, even if ```z_coordinate_name```
         is specified.
     min_distance:  float
-        minimum distance between detected features (m)
+        minimum distance between detected features (meters)
     x_coordinate_name: str
         The name of the x coordinate to calculate distance based on in meters.
         This is typically `projection_x_coordinate`. Currently unused.
@@ -1459,7 +1456,7 @@ def filter_min_distance(
         The name of the z coordinate to calculate distance based on in meters.
         This is typically `altitude`. If None, tries to auto-detect.
     target: {'maximum', 'minimum'}, optional
-        Flag to determine if tracking is targetting minima or maxima in
+        Flag to determine if tracking is targeting minima or maxima in
         the data. Default is 'maximum'.
     PBC_flag : str('none', 'hdim_1', 'hdim_2', 'both'), optional
         Sets whether to use periodic boundaries, and if so in which directions.
@@ -1475,7 +1472,6 @@ def filter_min_distance(
         Minimum real point in hdim_2, for use with periodic boundaries.
     max_h2: int, optional
         Maximum point in hdim_2, exclusive. max_h2-min_h2 should be the size.
-
 
     Returns
     -------
@@ -1548,8 +1544,8 @@ def filter_min_distance(
     # Check if we have PBCs.
     if PBC_flag in ["hdim_1", "hdim_2", "both"]:
         # Note that we multiply by dxy to get the distances in spatial coordinates
-        dist_func = build_distance_function(
-            min_h1 * dxy, max_h1 * dxy, min_h2 * dxy, max_h2 * dxy, PBC_flag
+        dist_func = pbc_utils.build_distance_function(
+            min_h1 * dxy, max_h1 * dxy, min_h2 * dxy, max_h2 * dxy, PBC_flag, is_3D
         )
         features_tree = BallTree(feature_locations, metric="pyfunc", func=dist_func)
         neighbours = features_tree.query_radius(feature_locations, r=min_distance)

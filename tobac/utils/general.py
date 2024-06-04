@@ -7,6 +7,7 @@ import logging
 import pandas as pd
 
 from . import internal as internal_utils
+from . import decorators
 import numpy as np
 import sklearn
 import sklearn.neighbors
@@ -366,7 +367,10 @@ def get_bounding_box(x, buffer=1):
     return bbox
 
 
-def get_spacings(field_in, grid_spacing=None, time_spacing=None):
+@decorators.xarray_to_iris()
+def get_spacings(
+    field_in, grid_spacing=None, time_spacing=None, average_method="arithmetic"
+):
     """Determine spatial and temporal grid spacing of the
     input data.
 
@@ -382,6 +386,16 @@ def get_spacings(field_in, grid_spacing=None, time_spacing=None):
     time_spacing : float, optional
         Manually sets the time spacing if specified.
         Default is None.
+
+    average_method : string, optional
+        Defines how spacings in x- and y-direction are
+        combined.
+
+        - 'arithmetic' : standard arithmetic mean like (dx+dy)/2
+        - 'geometric' : geometric mean; conserves gridbox area
+
+        Default is 'arithmetic'.
+
 
     Returns
     -------
@@ -411,11 +425,16 @@ def get_spacings(field_in, grid_spacing=None, time_spacing=None):
     ) and (grid_spacing is None):
         x_coord = deepcopy(field_in.coord("projection_x_coordinate"))
         x_coord.convert_units("metre")
-        dx = np.diff(field_in.coord("projection_y_coordinate")[0:2].points)[0]
+        dx = np.diff(x_coord[0:2].points)[0]
         y_coord = deepcopy(field_in.coord("projection_y_coordinate"))
         y_coord.convert_units("metre")
-        dy = np.diff(field_in.coord("projection_y_coordinate")[0:2].points)[0]
-        dxy = 0.5 * (dx + dy)
+        dy = np.diff(y_coord[0:2].points)[0]
+
+        if average_method == "arithmetic":
+            dxy = 0.5 * (np.abs(dx) + np.abs(dy))
+        elif average_method == "geometric":
+            dxy = np.sqrt(np.abs(dx) * np.abs(dy))
+
     elif grid_spacing is not None:
         dxy = grid_spacing
     else:
@@ -434,6 +453,10 @@ def get_spacings(field_in, grid_spacing=None, time_spacing=None):
     elif time_spacing is not None:
         # use value of time_spacing for dt:
         dt = time_spacing
+    else:
+        raise ValueError(
+            "no information about time spacing, need either input cube with time or keyword argument time_spacing"
+        )
     return dxy, dt
 
 
@@ -623,15 +646,21 @@ def combine_feature_dataframes(
     if old_feature_column_name is not None:
         combined_df[old_feature_column_name] = combined_df["feature"]
     # count_per_time = combined_feats.groupby('time')['index'].count()
-    combined_df["frame"] = combined_df["time"].rank(method="dense").astype(int) - 1
+    original_frame_dtype = combined_df["frame"].dtype
+    combined_df["frame"] = (
+        combined_df["time"].rank(method="dense").astype(original_frame_dtype) - 1
+    )
     combined_sorted = combined_df.sort_values(sort_features_by, ignore_index=True)
     if renumber_features:
-        combined_sorted["feature"] = np.arange(1, len(combined_sorted) + 1)
+        original_feature_dtype = combined_df["feature"].dtype
+        combined_sorted["feature"] = np.arange(
+            1, len(combined_sorted) + 1, dtype=original_feature_dtype
+        )
     combined_sorted = combined_sorted.reset_index(drop=True)
     return combined_sorted
 
 
-@internal_utils.irispandas_to_xarray
+@internal_utils.irispandas_to_xarray()
 def transform_feature_points(
     features,
     new_dataset,
