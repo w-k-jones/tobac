@@ -4,18 +4,20 @@ import xarray as xr
 import numpy as np
 
 
-def features_to_field(
+def features_to_interest_field(
     features,
-    template,
+    template: xr.DataArray,
     *,
-    blob="gaussian",
-    sigma=2500.0,  # meters
-    radius=2500.0,  # meters
-    amplitude="threshold_value",
-    position=("x", "y"),
-    time_key="frame",
-    mode="max",
-    dtype=None,
+    position_mode="hdim",  # "hdim" or "xy"
+    position_cols=None,  # override
+    time_key="frame",  # or "time"
+    blob="gaussian",  # "gaussian" or "tophat"
+    mode="max",  # "max" or "add"
+    amp_from="threshold_value",  # column name or constant float
+    amp_factor=2.0,  # amp = amp_factor * amp_from (if column)
+    size_from="area",  # column name; if missing uses sigma
+    sigma=5.0,  # default sigma (grid points for hdim)
+    min_sigma=1.0,
 ):
     if not isinstance(template, xr.DataArray):
         raise TypeError("template must be an xarray.DataArray")
@@ -23,37 +25,59 @@ def features_to_field(
         raise ValueError("template must be at least 3D (time + 2D space)")
 
     tdim = template.dims[0]
-    d1, d2 = template.dims[-2], template.dims[-1]  # d1="x", d2="y"
+    d1, d2 = template.dims[-2], template.dims[-1]
+    out = xr.zeros_like(template, dtype=float)
 
-    out = xr.zeros_like(template, dtype=dtype or template.dtype)
+    n1, n2 = template.sizes[d1], template.sizes[d2]
 
-    c1 = template[d1].values  # x coords (meters)
-    c2 = template[d2].values  # y coords (meters)
-    C1, C2 = np.meshgrid(c1, c2, indexing="ij")  # shape (len(x), len(y))
+    # choose position columns
+    if position_cols is None:
+        if position_mode == "hdim":
+            position_cols = ("hdim_1", "hdim_2")
+        elif position_mode == "xy":
+            position_cols = ("x", "y")
+        else:
+            raise ValueError("position_mode must be 'hdim' or 'xy'")
 
-    if blob == "gaussian":
+    p1_col, p2_col = position_cols
 
-        def kernel(p1, p2, amp):
-            rr2 = (C1 - p1) ** 2 + (C2 - p2) ** 2
-            return amp * np.exp(-0.5 * rr2 / (sigma**2))
+    # coordinate grids
+    if position_mode == "hdim":
+        C1, C2 = np.meshgrid(np.arange(n1), np.arange(n2), indexing="ij")
 
-    elif blob == "tophat":
+        # sigma is in grid points
+        def rr2(p1, p2):
+            return (C1 - p1) ** 2 + (C2 - p2) ** 2
 
-        def kernel(p1, p2, amp):
-            rr2 = (C1 - p1) ** 2 + (C2 - p2) ** 2
-            return amp * (rr2 <= radius**2)
+    else:  # "xy" physical coords
+        c1 = template[d1].values
+        c2 = template[d2].values
+        C1, C2 = np.meshgrid(c1, c2, indexing="ij")
 
-    else:
-        raise ValueError(f"Unknown blob={blob}")
+        # sigma is in same units as coords
+        def rr2(p1, p2):
+            return (C1 - p1) ** 2 + (C2 - p2) ** 2
 
-    p1_col, p2_col = position
+    def amplitude(row):
+        if isinstance(amp_from, (int, float)):
+            return float(amp_from)
+        return amp_factor * float(row[amp_from])
 
-    def get_amp(row):
-        if isinstance(amplitude, (int, float)):
-            return float(amplitude)
-        return float(row[amplitude])
+    def sigma_for_row(row):
+        if (
+            size_from is not None
+            and size_from in row.index
+            and np.isfinite(row[size_from])
+        ):
+            area = float(row[size_from])
+            if area > 0:
+                r = np.sqrt(area / np.pi)
+                s = max(min_sigma, r / 2.0)
+                return s
+        return float(sigma)
 
     for _, row in features.iterrows():
+        # time selection
         if time_key == "frame":
             tidx = int(row["frame"])
             selector = {tdim: out[tdim].values[tidx]}
@@ -62,13 +86,21 @@ def features_to_field(
         else:
             raise ValueError("time_key must be 'frame' or 'time'")
 
-        p1 = float(row[p1_col])  # x position in meters
-        p2 = float(row[p2_col])  # y position in meters
-        amp = get_amp(row)
+        p1 = float(row[p1_col])
+        p2 = float(row[p2_col])
+        amp = amplitude(row)
+        sig = sigma_for_row(row)
 
-        blob2d = kernel(p1, p2, amp)
+        r2 = rr2(p1, p2)
+
+        if blob == "gaussian":
+            blob2d = amp * np.exp(-0.5 * r2 / (sig**2))
+        elif blob == "tophat":
+            blob2d = amp * (r2 <= (sig**2))
+        else:
+            raise ValueError("blob must be 'gaussian' or 'tophat'")
+
         current = out.sel(selector).values
-
         if mode == "add":
             out.loc[selector] = current + blob2d
         elif mode == "max":
