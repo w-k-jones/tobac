@@ -140,6 +140,8 @@ autodoc_mock_imports = [
     "skimage",
     "sklearn",
     "cftime",
+    "dask",
+    "dask-image",
 ]
 
 autodoc_default_options = {
