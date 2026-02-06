@@ -515,19 +515,18 @@ def feature_detection_threshold(
         mask = binary_erosion(mask, selem)
         # detect individual regions, label  and count the number of pixels included:
     # Check PBC options TODO: make a more generic handler for PBC options
-    match PBC_flag:
-        case "none":
-            wrap_axes = None
-        case "hdim_1":
-            wrap_axes = (1,) if is_3D else (0,)
-        case "hdim_2":
-            wrap_axes = (2,) if is_3D else (1,)
-        case "both":
-            wrap_axes = (1, 2) if is_3D else (0, 1)
-        case _:
-            raise ValueError(
-                "Options for periodic are currently: none, " + ", ".join(pbc_options)
-            )
+    if PBC_flag == "none":
+        wrap_axes = None
+    elif PBC_flag == "hdim_1":
+        wrap_axes = (1,) if is_3D else (0,)
+    elif PBC_flag == "hdim_2":
+        wrap_axes = (2,) if is_3D else (1,)
+    elif PBC_flag == "both":
+        wrap_axes = (1, 2) if is_3D else (0, 1)
+    else:
+        raise ValueError(
+            "Options for periodic are currently: none, " + ", ".join(pbc_options)
+        )
     labels, num_labels = dask.compute(
         *label(
             mask,
