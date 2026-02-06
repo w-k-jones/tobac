@@ -142,6 +142,7 @@ autodoc_mock_imports = [
     "cftime",
     "dask",
     "dask-image",
+    "dask_image", 
 ]
 
 autodoc_default_options = {
