@@ -431,63 +431,12 @@ def linking_trackpy(
     if is_3D:
         trajectories_unfiltered = trajectories_unfiltered.drop("vdim_adj", axis=1)
 
-    # Reset particle numbers from the arbitray numbers at the end of the feature detection and linking to consecutive cell numbers
-    # keep 'particle' for reference to the feature detection step.
-    trajectories_unfiltered["cell"] = None
-    particle_num_to_cell_num = dict()
-    for i_particle, particle in enumerate(
-        pd.Series.unique(trajectories_unfiltered["particle"])
-    ):
-        cell = int(i_particle + cell_number_start)
-        particle_num_to_cell_num[particle] = int(cell)
-    remap_particle_to_cell_vec = np.vectorize(remap_particle_to_cell_nv)
-    trajectories_unfiltered["cell"] = remap_particle_to_cell_vec(
-        particle_num_to_cell_num, trajectories_unfiltered["particle"]
+    trajectories_final = _filter_trajectories(
+        trajectories_unfiltered,
+        cell_number_start=cell_number_start,
+        cell_number_unassigned=cell_number_unassigned,
+        stubs=stubs,
     )
-    trajectories_unfiltered["cell"] = trajectories_unfiltered["cell"].astype(int)
-    trajectories_unfiltered.drop(columns=["particle"], inplace=True)
-
-    trajectories_bycell = trajectories_unfiltered.groupby("cell")
-    stub_cell_nums = list()
-    for cell, trajectories_cell in trajectories_bycell:
-        # logging.debug("cell: "+str(cell))
-        # logging.debug("feature: "+str(trajectories_cell['feature'].values))
-        # logging.debug("trajectories_cell.shape[0]: "+ str(trajectories_cell.shape[0]))
-
-        if trajectories_cell.shape[0] < stubs:
-            logging.debug(
-                "cell"
-                + str(cell)
-                + "  is a stub ("
-                + str(trajectories_cell.shape[0])
-                + "), setting cell number to "
-                + str(cell_number_unassigned)
-            )
-            stub_cell_nums.append(cell)
-
-    trajectories_unfiltered.loc[
-        trajectories_unfiltered["cell"].isin(stub_cell_nums), "cell"
-    ] = cell_number_unassigned
-
-    trajectories_filtered = trajectories_unfiltered
-
-    # Interpolate to fill the gaps in the trajectories (left from allowing memory in the linking)
-    trajectories_filtered_unfilled = copy.deepcopy(trajectories_filtered)
-
-    #    trajectories_filtered_filled=fill_gaps(trajectories_filtered_unfilled,order=order,
-    #                                extrapolate=extrapolate,frame_max=field_in.shape[0]-1,
-    #                                hdim_1_max=field_in.shape[1],hdim_2_max=field_in.shape[2])
-    #     add coorinates from input fields to output trajectories (time,dimensions)
-    #    logging.debug('start adding coordinates to trajectories')
-    #    trajectories_filtered_filled=add_coordinates(trajectories_filtered_filled,field_in)
-    #     add time coordinate relative to cell initiation:
-    #    logging.debug('start adding cell time to trajectories')
-    trajectories_filtered_filled = trajectories_filtered_unfilled
-    trajectories_final = add_cell_time(
-        trajectories_filtered_filled, cell_number_unassigned=cell_number_unassigned
-    )
-    # Add metadata
-    trajectories_final.attrs["cell_number_unassigned"] = cell_number_unassigned
 
     # add coordinate to raw features identified:
     logging.debug("start adding coordinates to detected features")
