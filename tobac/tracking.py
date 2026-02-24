@@ -686,11 +686,6 @@ def linking_trackpy_latlon(
             size_cache = tp.linking.Linker.MAX_SUB_NET_SIZE_ADAPTIVE
             tp.linking.Linker.MAX_SUB_NET_SIZE_ADAPTIVE = subnetwork_size
 
-    # find latitude and longitude columns
-    if latitude_name == "":
-        latitude_name = None
-    if longitude_name == "":
-        longitude_name = None
     lat_col = coord_utils.find_coord_in_dataframe(
         features, latitude_name, coord_utils.COMMON_LAT_COORDS
     )
