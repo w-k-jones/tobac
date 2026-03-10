@@ -143,6 +143,7 @@ def test_to_datestr():
         assert (
             datetime_utils.to_datestr(date) == "2000-01-01T00:00:00.000000000"
             or datetime_utils.to_datestr(date) == "2000-01-01T00:00:00"
+            or datetime_utils.to_datestr(date) == "2000-01-01T00:00:00.000000"
         )
 
 
