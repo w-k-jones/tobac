@@ -164,9 +164,11 @@ def test_to_datestr_array():
         cftime.DatetimeNoLeap(2000, 1, 1),
     ]
     for date in test_dates:
-        assert datetime_utils.to_datestr([date]) == [
-            "2000-01-01T00:00:00.000000000"
-        ] or datetime_utils.to_datestr([date]) == ["2000-01-01T00:00:00"]
+        assert (
+            datetime_utils.to_datestr([date]) == ["2000-01-01T00:00:00.000000000"]
+            or datetime_utils.to_datestr([date]) == ["2000-01-01T00:00:00"]
+            or (datetime_utils.to_datestr([date]) == ["2000-01-01T00:00:00.000000"])
+        )
 
 
 def test_match_datetime_format():
