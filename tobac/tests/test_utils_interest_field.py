@@ -7,6 +7,9 @@ from tobac.utils.features_to_field import features_to_interest_field
 
 
 def make_template():
+    """
+    Create a template interest field with time, x, and y dimensions.
+    """
     time = np.arange(5)
     x = np.arange(50)
     y = np.arange(60)
@@ -21,6 +24,9 @@ def make_template():
 
 
 def test_empty_features_returns_zero_field():
+    """
+    Test that empty features return an output field filled with zeros.
+    """
     template = make_template()
 
     features = pd.DataFrame(columns=["frame", "hdim_1", "hdim_2", "threshold_value"])
@@ -38,6 +44,9 @@ def test_empty_features_returns_zero_field():
 
 
 def test_amplitude_scaling_from_threshold():
+    """
+    Test that the output amplitude is scaled correctly from threshold_value.
+    """
     template = make_template()
 
     features = pd.DataFrame(
@@ -66,6 +75,9 @@ def test_amplitude_scaling_from_threshold():
 
 
 def test_blob_center_is_at_feature_position():
+    """
+    Test that the blob maximum is located at the feature position.
+    """
     template = make_template()
 
     features = pd.DataFrame(
@@ -95,6 +107,9 @@ def test_blob_center_is_at_feature_position():
 
 
 def test_add_vs_max_overlap():
+    """
+    Test that overlapping blobs are combined differently for add and max modes.
+    """
     template = make_template()
 
     features = pd.DataFrame(
@@ -131,6 +146,9 @@ def test_add_vs_max_overlap():
 
 
 def test_sigma_from_area_changes_blob_width():
+    """
+    Test that blob width is derived from area when size_from is set.
+    """
     template = make_template()
 
     features = pd.DataFrame(
@@ -164,6 +182,9 @@ def test_sigma_from_area_changes_blob_width():
 
 
 def test_invalid_position_mode_raises():
+    """
+    Test that an invalid position_mode raises a ValueError.
+    """
     template = make_template()
 
     features = pd.DataFrame(
