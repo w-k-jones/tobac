@@ -2,7 +2,7 @@
 
 import xarray as xr
 import numpy as np
-from typing import Literal
+from typing import Literal, Optional, Tuple, Union
 
 
 def features_to_interest_field(
@@ -10,13 +10,13 @@ def features_to_interest_field(
     template: xr.DataArray,  # field for correct geometrie
     *,
     position_mode: Literal["hdim", "xy"] = "hdim",
-    position_cols: tuple[str, ...] | None = None,
+    position_cols: Optional[Tuple[str, ...]] = None,
     time_key: Literal["frame", "time"] = "frame",
     blob: Literal["gaussian", "tophat"] = "gaussian",
     mode: Literal["max", "add"] = "max",
-    amp_from: str | float = "threshold_value",
+    amp_from: Union[str, float] = "threshold_value",
     amp_factor: float = 2.0,
-    size_from: str | None = "area",
+    size_from: Optional[str] = "area",
     sigma: float = 5.0,
     min_sigma: float = 1.0,
 ):
