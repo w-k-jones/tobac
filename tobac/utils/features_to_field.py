@@ -9,16 +9,18 @@ def features_to_interest_field(
     features,
     template: xr.DataArray,  # field for correct geometrie
     *,
-    position_mode: Literal["hdim", "xy"] = "hdim",
+    position_mode: Literal["hdim"] = "hdim",
     position_cols: Optional[Tuple[str, ...]] = None,
     time_key: Literal["frame", "time"] = "frame",
-    blob: Literal["gaussian", "tophat"] = "gaussian",
+    blob: Literal["gaussian", "cone", "tophat"] = "gaussian",
     mode: Literal["max", "add"] = "max",
-    amp_from: Union[str, float] = "threshold_value",
+    amp_from: Union[str, float] = "max",
+    thresh_from: Optional[str] = "threshold_value",
+    size_from: Optional[str] = "num",
     amp_factor: float = 2.0,
-    size_from: Optional[str] = "area",
-    sigma: float = 5.0,
-    min_sigma: float = 1.0,
+    default_amp: float = 2.0,
+    default_size: float = 5.0,
+    default_thresh: float = 1.0,
 ):
     """
     Internal function to reconstruct an artificial interest field from feature
@@ -31,27 +33,29 @@ def features_to_interest_field(
         size information.
     template : xarray.DataArray
         Reference array defining the output shape, dimensions, and coordinates.
-    position_mode : {"hdim", "xy"}, optional
+    position_mode : {"hdim"}, optional
         Convention used to interpret spatial positions.
     position_cols : sequence of str, optional
         Column names containing the spatial coordinates of each feature.
     time_key : {"frame", "time"}, optional
         Column used to assign features to time steps.
-    blob : {"gaussian", "tophat"}, optional
+    blob : {"gaussian", "cone", "tophat"}, optional
         Blob shape used to reconstruct each feature.
     mode : {"max", "add"}, optional
         Method used to combine overlapping blobs.
     amp_from : str or float, optional
         Column name or constant value used to define blob amplitude.
-    amp_factor : float, optional
-        Factor applied to amplitudes derived from `amp_from`.
+    thresh_from : str, optional
+        Column name used to estimate the threshold for blob amplitude.
     size_from : str, optional
         Column name used to estimate blob size.
-    sigma : float, optional
-        Default blob width or radius.
-    min_sigma : float, optional
-        Minimum allowed blob size.
-
+    default_amp : float, optional
+        Factor applied to amplitudes derived from `amp_from`.
+    default_thresh : float, optional
+        Default threshold if `thresh_from` is not provided or invalid.
+    default_size : float, optional
+        Default blob size if `size_from` is not provided or invalid.
+    
     Returns
     -------
     xarray.DataArray
@@ -79,16 +83,13 @@ def features_to_interest_field(
                 position_cols = ("hdim_1", "hdim_2")
             elif n_spatial == 3:
                 position_cols = ("vdim", "hdim_1", "hdim_2")
-        elif position_mode == "xy":
-            position_cols = spatial_dims
         else:
-            raise ValueError("position_mode must be 'hdim' or 'xy'")
-
+            raise ValueError("position_mode must be 'hdim'")
     # coordinate grids
     if position_mode == "hdim":
         coords = [np.arange(n) for n in sizes]
     else:
-        coords = [template[d].values for d in spatial_dims]
+        raise ValueError("position_mode must be 'hdim'")
 
     grids = np.meshgrid(*coords, indexing="ij")
 
@@ -104,10 +105,20 @@ def features_to_interest_field(
 
         pos = [float(row[c]) for c in position_cols]
 
-        if isinstance(amp_from, (int, float)):
-            amp = float(amp_from)
+        if thresh_from is not None:
+            if isinstance(thresh_from, str) and thresh_from in row.index and np.isfinite(row[thresh_from]):
+                fthresh = float(row[thresh_from]) 
+            else:
+                fthresh = default_thresh
+
+        if amp_from is not None:
+            if isinstance(amp_from, str) and amp_from in row.index and np.isfinite(row[amp_from]):
+                fmax = float(row[amp_from]) 
+            else:
+                fmax = amp_factor * fthresh
         else:
-            amp = amp_factor * float(row[amp_from])
+            fmax = amp_factor * fthresh 
+        
 
         if (
             size_from is not None
@@ -115,25 +126,35 @@ def features_to_interest_field(
             and np.isfinite(row[size_from])
         ):
             area = float(row[size_from])
-            if area > 0:
-                r = np.sqrt(area / np.pi)
-                sig = max(min_sigma, r / 2.0)
-            else:
-                sig = float(sigma)
+            if area == 0:
+                area = default_size
         else:
-            sig = float(sigma)
+            area = default_size
 
         r2 = 0
         for g, p in zip(grids, pos):
             r2 += (g - p) ** 2
 
-        if blob == "gaussian":
-            blob_nd = amp * np.exp(-0.5 * r2 / (sig**2))
-        elif blob == "tophat":
-            blob_nd = amp * (r2 <= (sig**2))
-        else:
-            raise ValueError("blob must be 'gaussian' or 'tophat'")
+        # scale r-squared by the size of the blob
+        r_scale = np.sqrt( area / np.pi ) 
+        r2 /= r_scale**2
 
+        if blob == "gaussian":
+
+            # set gauss parameters
+            A = fmax
+            B = np.log( fmax / fthresh )
+            
+            blob_nd = A * np.exp(- B * r2  )
+        elif blob == "cone":
+            A = fthresh - fmax
+            B = fmax 
+            blob_nd = (A * np.sqrt(r2)  + B) 
+            blob_nd = np.maximum(blob_nd, 0)
+        elif blob == "tophat":
+            blob_nd = fmax * (r2 <= 1)
+        else:
+            raise ValueError("blob must be 'gaussian', 'cone', or 'tophat'")
         current = out.sel(selector).values
 
         if mode == "add":
