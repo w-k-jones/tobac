@@ -55,7 +55,7 @@ def features_to_interest_field(
         Default threshold if `thresh_from` is not provided or invalid.
     default_size : float, optional
         Default blob size if `size_from` is not provided or invalid.
-    
+
     Returns
     -------
     xarray.DataArray
@@ -106,19 +106,26 @@ def features_to_interest_field(
         pos = [float(row[c]) for c in position_cols]
 
         if thresh_from is not None:
-            if isinstance(thresh_from, str) and thresh_from in row.index and np.isfinite(row[thresh_from]):
-                fthresh = float(row[thresh_from]) 
+            if (
+                isinstance(thresh_from, str)
+                and thresh_from in row.index
+                and np.isfinite(row[thresh_from])
+            ):
+                fthresh = float(row[thresh_from])
             else:
                 fthresh = default_thresh
 
         if amp_from is not None:
-            if isinstance(amp_from, str) and amp_from in row.index and np.isfinite(row[amp_from]):
-                fmax = float(row[amp_from]) 
+            if (
+                isinstance(amp_from, str)
+                and amp_from in row.index
+                and np.isfinite(row[amp_from])
+            ):
+                fmax = float(row[amp_from])
             else:
                 fmax = amp_factor * fthresh
         else:
-            fmax = amp_factor * fthresh 
-        
+            fmax = amp_factor * fthresh
 
         if (
             size_from is not None
@@ -136,20 +143,20 @@ def features_to_interest_field(
             r2 += (g - p) ** 2
 
         # scale r-squared by the size of the blob
-        r_scale = np.sqrt( area / np.pi ) 
+        r_scale = np.sqrt(area / np.pi)
         r2 /= r_scale**2
 
         if blob == "gaussian":
 
             # set gauss parameters
             A = fmax
-            B = np.log( fmax / fthresh )
-            
-            blob_nd = A * np.exp(- B * r2  )
+            B = np.log(fmax / fthresh)
+
+            blob_nd = A * np.exp(-B * r2)
         elif blob == "cone":
             A = fthresh - fmax
-            B = fmax 
-            blob_nd = (A * np.sqrt(r2)  + B) 
+            B = fmax
+            blob_nd = A * np.sqrt(r2) + B
             blob_nd = np.maximum(blob_nd, 0)
         elif blob == "tophat":
             blob_nd = fmax * (r2 <= 1)

@@ -303,4 +303,3 @@ def test_reconstructed_field_recovers_feature_position_and_size(blob):
             f"blob={blob}, frame={frame}: detected num={detected_num:.1f} "
             f"differs from input num={input_num:.1f} by {rel_err*100:.1f}%"
         )
-
