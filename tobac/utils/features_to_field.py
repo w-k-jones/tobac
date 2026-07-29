@@ -149,7 +149,6 @@ def features_to_interest_field(
             volume = area_or_volume
             r_scale = np.cbrt(3 * volume / (4 * np.pi))
 
-
         # scale r-squared by the size of the blob
         r2 /= r_scale**2
 
