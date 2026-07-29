@@ -132,18 +132,25 @@ def features_to_interest_field(
             and size_from in row.index
             and np.isfinite(row[size_from])
         ):
-            area = float(row[size_from])
-            if area == 0:
-                area = default_size
+            area_or_volume = float(row[size_from])
+            if area_or_volume == 0:
+                area_or_volume = default_size
         else:
-            area = default_size
+            area_or_volume = default_size
 
         r2 = 0
         for g, p in zip(grids, pos):
             r2 += (g - p) ** 2
 
+        if n_spatial == 2:
+            area = area_or_volume
+            r_scale = np.sqrt(area / np.pi)
+        elif n_spatial == 3:
+            volume = area_or_volume
+            r_scale = np.cbrt(3 * volume / (4 * np.pi))
+
+
         # scale r-squared by the size of the blob
-        r_scale = np.sqrt(area / np.pi)
         r2 /= r_scale**2
 
         if blob == "gaussian":
@@ -152,7 +159,11 @@ def features_to_interest_field(
             A = fmax
             B = np.log(fmax / fthresh)
 
-            blob_nd = A * np.exp(-B * r2)
+            maxBr2 = np.log(1e10)  # avoid numerical issues with very small values
+            Br2 = B * r2
+            Br2 = np.minimum(Br2, maxBr2)
+            blob_nd = A * np.exp(-Br2)
+
         elif blob == "cone":
             A = fthresh - fmax
             B = fmax
