@@ -161,7 +161,13 @@ def test_feature_detection_multithreshold_timestep_3d(z_dim_num):
     )
 
     labels, features = feat_detect.feature_detection_multithreshold_timestep(
-        test_data_xr, 0, threshold=[1], n_min_threshold=[1], dxy=1, vertical_axis=z_dim_num, return_labels=True
+        test_data_xr,
+        0,
+        threshold=[1],
+        n_min_threshold=[1],
+        dxy=1,
+        vertical_axis=z_dim_num,
+        return_labels=True,
     )
 
     # Make sure we have only one feature
