@@ -1160,9 +1160,9 @@ def feature_detection_multithreshold_timestep(
         # We need to transpose the input data
         if vertical_axis is not None:
             if vertical_axis == 1:
-                labels = np.transpose(labels, axes=(1, 0, 2))
+                labels = np.transpose(labels, axes=(1, 0, 2)).copy()
             elif vertical_axis == 2:
-                labels = np.transpose(labels, axes=(2, 0, 1))
+                labels = np.transpose(labels, axes=(2, 0, 1)).copy()
         for key in regions_old.keys():
             labels.ravel()[regions_old[key]] = key
             # apply function to get statistics based on labeled regions and functions provided by the user

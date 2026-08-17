@@ -154,14 +154,14 @@ def test_feature_detection_multithreshold_timestep_3d(z_dim_num):
     if z_dim_num == 1:
         test_data = test_data.transpose(1, 0, 2)
     if z_dim_num == 2:
-        test_data = test_data.transpose(2, 0, 1)
+        test_data = test_data.transpose(1, 2, 0)
 
     test_data_xr = tbtest.make_dataset_from_arr(
         test_data, z_dim_num=z_dim_num, data_type="xarray"
     )
 
     labels, features = feat_detect.feature_detection_multithreshold_timestep(
-        test_data_xr, 0, threshold=[1], n_min_threshold=[1], dxy=1, return_labels=True
+        test_data_xr, 0, threshold=[1], n_min_threshold=[1], dxy=1, vertical_axis=z_dim_num, return_labels=True
     )
 
     # Make sure we have only one feature
