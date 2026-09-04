@@ -374,10 +374,7 @@ def mask_all_surface(mask, masked=False, z_coord="model_level_number"):
 
 @iris_to_xarray()
 def convert_feature_mask_to_cells(
-    features: pd.DataFrame,
-    feature_mask: xr.DataArray,
-    stubs: Optional[int] = None,
-    inplace: bool = False,
+    features: pd.DataFrame, feature_mask: xr.DataArray, stubs: Optional[int] = None, inplace: bool = False
 ) -> xr.DataArray:
     """Relabels a feature mask provided by tobac.segmentation with the cell
     values provided by tobac.linking_trackpy
@@ -451,7 +448,7 @@ def convert_cell_mask_to_features(
     features: pd.DataFrame,
     cell_mask: xr.DataArray,
     stubs: Optional[int] = None,
-    inplace: bool = False,
+    inplace: bool = False, 
 ) -> xr.DataArray:
     """Relabels a cell mask, such as that produced by
     convert_feature_mask_to_cells, to the feature values provided by
@@ -558,16 +555,13 @@ def convert_cell_mask_to_features(
 
 @iris_to_xarray()
 def convert_feature_mask_to_tracks(
-    features: pd.DataFrame,
-    feature_mask: xr.DataArray,
-    stubs: Optional[int] = None,
-    inplace: bool = False,
+    features: pd.DataFrame, feature_mask: xr.DataArray, stubs: Optional[int] = None, inplace: bool = False
 ) -> xr.DataArray:
     """Relabels a feature mask provided by tobac.segmentation with the track
     values provided by tobac.merge_split.merge_split_MEST
 
-    WARNING: it is not possible to reconstruct the feature mask from the output
-    from this function. The inplace keyword, and overwriting the original mask,
+    WARNING: it is not possible to reconstruct the feature mask from the output 
+    from this function. The inplace keyword, and overwriting the original mask, 
     should be used with care.
 
     Parameters
@@ -633,19 +627,15 @@ def convert_feature_mask_to_tracks(
 
     return track_mask
 
-
 @iris_to_xarray()
 def convert_cell_mask_to_tracks(
-    features: pd.DataFrame,
-    cell_mask: xr.DataArray,
-    stubs: Optional[int] = None,
-    inplace: bool = False,
+    features: pd.DataFrame, cell_mask: xr.DataArray, stubs: Optional[int] = None, inplace: bool = False
 ) -> xr.DataArray:
     """Relabels a cell mask provided by tobac.segmentation with the track
     values provided by tobac.merge_split.merge_split_MEST
 
-    WARNING: it is not possible to reconstruct the cell mask from the output
-    from this function. The inplace keyword, and overwriting the original mask,
+    WARNING: it is not possible to reconstruct the cell mask from the output 
+    from this function. The inplace keyword, and overwriting the original mask, 
     should be used with care.
 
     Parameters

@@ -11,7 +11,7 @@ from tobac.utils.mask import (
     convert_cell_mask_to_features,
     convert_cell_mask_to_tracks,
     convert_feature_mask_to_cells,
-    convert_feature_mask_to_tracks,
+    convert_feature_mask_to_tracks, 
 )
 
 
@@ -278,9 +278,8 @@ def test_convert_feature_mask_to_cells_no_input_mutation():
     # Test mask is the same
     assert mask_copy.equals(test_mask)
 
-
 def test_convert_feature_mask_to_cells_inplace():
-    """Test that convert_feature_mask_to_cells does alter the input mask when
+    """Test that convert_feature_mask_to_cells does alter the input mask when 
     the inplace keyword is used
     """
     test_data = np.zeros([3, 4, 5], dtype=int)
@@ -313,9 +312,7 @@ def test_convert_feature_mask_to_cells_inplace():
     mask_copy = test_mask.copy(deep=True)
     features_copy = test_features.copy(deep=True)
 
-    cell_mask = convert_feature_mask_to_cells(
-        test_features, test_mask, stubs=-1, inplace=True
-    )
+    cell_mask = convert_feature_mask_to_cells(test_features, test_mask, stubs=-1, inplace=True)
 
     # Test dataframe is the same
     pd.testing.assert_frame_equal(test_features, features_copy)
@@ -688,7 +685,7 @@ def test_convert_cell_mask_to_features_no_input_mutation():
 
 
 def test_convert_cell_mask_to_features_inplace():
-    """Test that convert_cell_mask_to_features does alter the input mask when
+    """Test that convert_cell_mask_to_features does alter the input mask when 
     the inplace keyword is used
     """
     test_data = np.zeros([3, 4, 5], dtype=int)
@@ -721,9 +718,7 @@ def test_convert_cell_mask_to_features_inplace():
     mask_copy = test_mask.copy(deep=True)
     features_copy = test_features.copy(deep=True)
 
-    feature_mask = convert_cell_mask_to_features(
-        test_features, test_mask, stubs=-1, inplace=True
-    )
+    feature_mask = convert_cell_mask_to_features(test_features, test_mask, stubs=-1, inplace=True)
 
     # Test dataframe is the same
     pd.testing.assert_frame_equal(test_features, features_copy)
@@ -761,7 +756,7 @@ def test_convert_feature_mask_to_tracks_single_track():
                 datetime(2000, 1, 1, 0), datetime(2000, 1, 1, 2), periods=3
             ),
             "cell": [1, 1, 1],
-            "track": [1, 1, 1],
+            "track": [1, 1, 1], 
         }
     )
 
@@ -778,7 +773,6 @@ def test_convert_feature_mask_to_tracks_single_track():
 
     # Test coords are the same
     assert track_mask.coords.keys() == test_mask.coords.keys()
-
 
 def test_convert_feature_mask_to_tracks_multiple_tracks():
     """Test functionality of convert_feature_mask_to_tracks with multiple tracks
@@ -816,7 +810,7 @@ def test_convert_feature_mask_to_tracks_multiple_tracks():
                 datetime(2000, 1, 1, 2),
             ],
             "cell": [1, 1, 3, 3, 4, 5],
-            "track": [1, 1, 2, 2, 4, 4],
+            "track": [1, 1, 2, 2, 4, 4]
         }
     )
 
@@ -872,7 +866,7 @@ def test_convert_feature_mask_to_tracks_mismatched_mask():
                 datetime(2000, 1, 1, 0), datetime(2000, 1, 1, 2), periods=3
             ),
             "cell": [1, 1, 1],
-            "track": [1, 1, 1],
+            "track": [1, 1, 1], 
         }
     )
 
@@ -1008,9 +1002,8 @@ def test_convert_feature_mask_to_tracks_no_input_mutation():
     # Test mask is the same
     assert mask_copy.equals(test_mask)
 
-
 def test_convert_feature_mask_to_tracks_inplace():
-    """Test that convert_feature_mask_to_tracks does alter the input mask when
+    """Test that convert_feature_mask_to_tracks does alter the input mask when 
     the inplace keyword is used
     """
     test_data = np.zeros([3, 4, 5], dtype=int)
@@ -1044,9 +1037,7 @@ def test_convert_feature_mask_to_tracks_inplace():
     mask_copy = test_mask.copy(deep=True)
     features_copy = test_features.copy(deep=True)
 
-    track_mask = convert_feature_mask_to_tracks(
-        test_features, test_mask, stubs=-1, inplace=True
-    )
+    track_mask = convert_feature_mask_to_tracks(test_features, test_mask, stubs=-1, inplace=True)
 
     # Test dataframe is the same
     pd.testing.assert_frame_equal(test_features, features_copy)
@@ -1057,7 +1048,6 @@ def test_convert_feature_mask_to_tracks_inplace():
 
 
 # Cell to track tests
-
 
 def test_convert_cell_mask_to_tracks_single_track():
     """Test basic functionality of convert_cell_mask_to_tracks with a single
@@ -1087,7 +1077,7 @@ def test_convert_cell_mask_to_tracks_single_track():
                 datetime(2000, 1, 1, 0), datetime(2000, 1, 1, 2), periods=3
             ),
             "cell": [1, 1, 1],
-            "track": [1, 1, 1],
+            "track": [1, 1, 1], 
         }
     )
 
@@ -1104,7 +1094,6 @@ def test_convert_cell_mask_to_tracks_single_track():
 
     # Test coords are the same
     assert track_mask.coords.keys() == test_mask.coords.keys()
-
 
 def test_convert_cell_mask_to_tracks_multiple_tracks():
     """Test functionality of convert_cell_mask_to_tracks with multiple tracks
@@ -1142,7 +1131,7 @@ def test_convert_cell_mask_to_tracks_multiple_tracks():
                 datetime(2000, 1, 1, 2),
             ],
             "cell": [1, 1, 3, 3, 4, 5],
-            "track": [1, 1, 2, 2, 4, 4],
+            "track": [1, 1, 2, 2, 4, 4]
         }
     )
 
@@ -1198,7 +1187,7 @@ def test_convert_cell_mask_to_tracks_mismatched_mask():
                 datetime(2000, 1, 1, 0), datetime(2000, 1, 1, 2), periods=3
             ),
             "cell": [1, 1, 1],
-            "track": [1, 1, 1],
+            "track": [1, 1, 1], 
         }
     )
 
@@ -1334,9 +1323,8 @@ def test_convert_cell_mask_to_tracks_no_input_mutation():
     # Test mask is the same
     assert mask_copy.equals(test_mask)
 
-
 def test_convert_cell_mask_to_tracks_inplace():
-    """Test that convert_cell_mask_to_tracks does alter the input mask when
+    """Test that convert_cell_mask_to_tracks does alter the input mask when 
     the inplace keyword is used
     """
     test_data = np.zeros([3, 4, 5], dtype=int)
@@ -1370,9 +1358,7 @@ def test_convert_cell_mask_to_tracks_inplace():
     mask_copy = test_mask.copy(deep=True)
     features_copy = test_features.copy(deep=True)
 
-    track_mask = convert_cell_mask_to_tracks(
-        test_features, test_mask, stubs=-1, inplace=True
-    )
+    track_mask = convert_cell_mask_to_tracks(test_features, test_mask, stubs=-1, inplace=True)
 
     # Test dataframe is the same
     pd.testing.assert_frame_equal(test_features, features_copy)
