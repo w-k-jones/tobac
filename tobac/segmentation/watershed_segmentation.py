@@ -63,7 +63,7 @@ def add_markers(
 ) -> np.array:
     """Adds markers for watershedding using the `features` dataframe
     to the marker_arr.
-
+    :hidden:
     Parameters
     ----------
     features: pandas.DataFrame
@@ -353,7 +353,7 @@ def segmentation_timestep(
 ) -> tuple[iris.cube.Cube, pd.DataFrame]:
     """Perform watershedding for an individual time step of the data. Works
     for both 2D and 3D data
-
+    :hidden:
     Parameters
     ----------
     field_in : xr.DataArray
@@ -777,7 +777,7 @@ def segmentation_timestep(
                 )
 
             # Get features that are needed for the buddy box
-            buddy_features = deepcopy(features_in.iloc[feat_inds])
+            buddy_features = features_in.iloc[feat_inds].copy()
 
             # create arrays to contain points of all buddies
             # and their transpositions/transformations
@@ -825,15 +825,15 @@ def segmentation_timestep(
                 )
 
                 # edit value in buddy_features dataframe
-                buddy_features.hdim_1.values[buddy_looper] = (
-                    pbc_utils.transfm_pbc_point(
-                        float(buddy_feat.hdim_1), hdim1_min, hdim1_max
-                    )
+                buddy_features.iloc[
+                    buddy_looper, buddy_features.columns.get_loc("hdim_1")
+                ] = pbc_utils.transfm_pbc_point(
+                    float(buddy_feat.hdim_1), hdim1_min, hdim1_max
                 )
-                buddy_features.hdim_2.values[buddy_looper] = (
-                    pbc_utils.transfm_pbc_point(
-                        float(buddy_feat.hdim_2), hdim2_min, hdim2_max
-                    )
+                buddy_features.iloc[
+                    buddy_looper, buddy_features.columns.get_loc("hdim_2")
+                ] = pbc_utils.transfm_pbc_point(
+                    float(buddy_feat.hdim_2), hdim2_min, hdim2_max
                 )
 
                 buddy_looper = buddy_looper + 1
@@ -904,16 +904,16 @@ def segmentation_timestep(
             if "vdim" not in buddy_features:
                 buddy_features["vdim"] = np.zeros(len(buddy_features), dtype=int)
             for buddy_looper in range(0, len(buddy_features)):
-                buddy_features.vdim.values[buddy_looper] = (
-                    buddy_features.vdim.values[buddy_looper] - bbox_zstart
-                )
+                buddy_features.iloc[
+                    buddy_looper, buddy_features.columns.get_loc("vdim")
+                ] = (buddy_features.vdim.values[buddy_looper] - bbox_zstart)
 
-                buddy_features.hdim_1.values[buddy_looper] = (
-                    buddy_features.hdim_1.values[buddy_looper] - bbox_ystart
-                )
-                buddy_features.hdim_2.values[buddy_looper] = (
-                    buddy_features.hdim_2.values[buddy_looper] - bbox_xstart
-                )
+                buddy_features.iloc[
+                    buddy_looper, buddy_features.columns.get_loc("hdim_1")
+                ] = (buddy_features.hdim_1.values[buddy_looper] - bbox_ystart)
+                buddy_features.iloc[
+                    buddy_looper, buddy_features.columns.get_loc("hdim_2")
+                ] = (buddy_features.hdim_2.values[buddy_looper] - bbox_xstart)
 
             # Create dask array from input data:
             buddy_data = buddy_rgn
@@ -1065,7 +1065,7 @@ def check_add_unseeded_across_bdrys(
 ) -> np.array:
     """Add new markers to unseeded but eligible regions when they are bordering
     an appropriate boundary.
-
+    :hidden:
     Parameters
     ----------
     dim_to_run:  {'hdim_1', 'hdim_2'}
@@ -1278,6 +1278,12 @@ def segmentation(
         dims=field.dims,
         name="segmentation_mask",
     ).assign_attrs(threshold=threshold)
+
+    if features is None or features.empty:
+        logging.debug(
+            "No features provided; returning empty segmentation mask and empty features DataFrame"
+        )
+        return segmentation_out_data, features
 
     features_out_list = []
 

@@ -1307,3 +1307,41 @@ def test_segmentation_return_cells_no_cell_column():
         cell_mask, _ = segmentation.segmentation(
             test_features, test_data, 1, threshold=1, return_cells=True
         )
+def test_segmentation_returns_early_for_empty_features():
+    """
+    Tests that segmentation exits early and returns an empty segmentation mask and the empty features input when no features are provided.
+    """
+    from tobac.utils.internal import make_empty_features_dataframe
+
+    field = xr.DataArray(
+        np.zeros((2, 10, 12), dtype=float),
+        dims=("time", "y", "x"),
+        coords={"time": pd.date_range("2000-01-01", periods=2, freq="2min")},
+        name="test_field",
+    )
+
+    df = make_empty_features_dataframe(is_3D=False)
+    seg_mask, features_out = seg.segmentation(
+        features=df,
+        field=field,
+        dxy=1000.0,
+        threshold=1.0,
+    )
+
+    # mask exists and is all zeros
+    assert seg_mask.shape == field.shape
+    assert np.all(seg_mask.data == 0)
+
+    # features returned unchanged and still empty
+    assert features_out is df
+    assert features_out.empty
+
+    sef_mask_none, features_out_none = seg.segmentation(
+        features=None,
+        field=field,
+        dxy=1000.0,
+        threshold=1.0,
+    )
+
+    assert np.all(sef_mask_none.data == 0)
+    assert features_out_none is None
