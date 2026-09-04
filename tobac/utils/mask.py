@@ -428,7 +428,7 @@ def convert_feature_mask_to_cells(
     )
 
     if stubs is not None:
-        cell_mapper.data[features.cell == stubs] = 0
+        cell_mapper = cell_mapper.where(features.cell.to_numpy() != stubs, 0)
 
     wh_nonzero_label = np.flatnonzero(cell_mask)
 
