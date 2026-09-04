@@ -1307,6 +1307,8 @@ def test_segmentation_return_cells_no_cell_column():
         cell_mask, _ = segmentation.segmentation(
             test_features, test_data, 1, threshold=1, return_cells=True
         )
+
+
 def test_segmentation_returns_early_for_empty_features():
     """
     Tests that segmentation exits early and returns an empty segmentation mask and the empty features input when no features are provided.
@@ -1321,7 +1323,7 @@ def test_segmentation_returns_early_for_empty_features():
     )
 
     df = make_empty_features_dataframe(is_3D=False)
-    seg_mask, features_out = seg.segmentation(
+    seg_mask, features_out = segmentation.segmentation(
         features=df,
         field=field,
         dxy=1000.0,
@@ -1336,7 +1338,7 @@ def test_segmentation_returns_early_for_empty_features():
     assert features_out is df
     assert features_out.empty
 
-    sef_mask_none, features_out_none = seg.segmentation(
+    sef_mask_none, features_out_none = segmentation.segmentation(
         features=None,
         field=field,
         dxy=1000.0,

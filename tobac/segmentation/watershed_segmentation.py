@@ -1334,7 +1334,7 @@ def segmentation(
             features_out,
             segmentation_out_data,
             stubs=stubs,
-            inplace=True, 
+            inplace=True,
         )
 
     logging.debug("Finished segmentation")

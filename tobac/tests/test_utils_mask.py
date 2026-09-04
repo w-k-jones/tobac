@@ -276,8 +276,9 @@ def test_convert_feature_mask_to_cells_no_input_mutation():
     # Test mask is the same
     assert mask_copy.equals(test_mask)
 
+
 def test_convert_feature_mask_to_cells_inplace():
-    """Test that convert_feature_mask_to_cells does alter the input mask when 
+    """Test that convert_feature_mask_to_cells does alter the input mask when
     the inplace keyword is used
     """
     test_data = np.zeros([3, 4, 5], dtype=int)
@@ -310,7 +311,9 @@ def test_convert_feature_mask_to_cells_inplace():
     mask_copy = test_mask.copy(deep=True)
     features_copy = test_features.copy(deep=True)
 
-    cell_mask = convert_feature_mask_to_cells(test_features, test_mask, stubs=-1, inplace=True)
+    cell_mask = convert_feature_mask_to_cells(
+        test_features, test_mask, stubs=-1, inplace=True
+    )
 
     # Test dataframe is the same
     pd.testing.assert_frame_equal(test_features, features_copy)
@@ -683,7 +686,7 @@ def test_convert_cell_mask_to_features_no_input_mutation():
 
 
 def test_convert_cell_mask_to_features_inplace():
-    """Test that convert_cell_mask_to_features does alter the input mask when 
+    """Test that convert_cell_mask_to_features does alter the input mask when
     the inplace keyword is used
     """
     test_data = np.zeros([3, 4, 5], dtype=int)
@@ -716,7 +719,9 @@ def test_convert_cell_mask_to_features_inplace():
     mask_copy = test_mask.copy(deep=True)
     features_copy = test_features.copy(deep=True)
 
-    feature_mask = convert_cell_mask_to_features(test_features, test_mask, stubs=-1, inplace=True)
+    feature_mask = convert_cell_mask_to_features(
+        test_features, test_mask, stubs=-1, inplace=True
+    )
 
     # Test dataframe is the same
     pd.testing.assert_frame_equal(test_features, features_copy)
@@ -724,5 +729,3 @@ def test_convert_cell_mask_to_features_inplace():
     # Test mask is the same
     assert feature_mask.equals(test_mask)
     assert not mask_copy.equals(test_mask)
-
-
