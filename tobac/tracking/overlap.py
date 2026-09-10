@@ -12,6 +12,7 @@ import skimage.measure
 from scipy.sparse import coo_array
 from sklearn.neighbors import BallTree
 
+import tobac.utils.internal as internal_utils
 from tobac.utils.datetime import to_timestamp
 from tobac.utils.generators import field_and_features_over_time
 from tobac.utils.periodic_boundaries import build_distance_function
@@ -635,7 +636,7 @@ def _assign_cells_to_matches(tracks: pd.DataFrame, matches: dict[int, int]) -> N
     prior_cells = tracks.loc[matches.keys(), "cell"]
     wh_unassigned = prior_cells == 0
     prior_cells[wh_unassigned] = (
-        np.arange((wh_unassigned).sum()) + tracks.cell.max() + 1
+        np.arange(wh_unassigned.sum(), dtype=int) + tracks.cell.max() + 1
     )
     tracks.loc[matches.keys(), "cell"] = prior_cells.values
     tracks.loc[matches.values(), "cell"] = prior_cells.values
@@ -803,13 +804,16 @@ def _filter_stub_cells(
         Tracks dataframe with stub cells removed and cell IDs renumbered.
 
     """
-    cell_count = tracks.groupby("cell").cell.count()
-    stub_cells = cell_count.index[cell_count < stubs].values
-    tracks.loc[np.isin(tracks.cell, stub_cells), "cell"] = 0
+    if stubs > 1:
+        cell_count = tracks.groupby("cell").cell.count()
+        stub_cells = cell_count.index[cell_count < stubs].values
+        tracks.loc[np.isin(tracks.cell, stub_cells), "cell"] = 0
 
     new_cells = np.unique(tracks.cell, return_inverse=True)[1]
     new_cells = np.where(
-        new_cells > 0, new_cells + cell_number_start - (1 if (tracks.cell==0).any() else 0), cell_number_unassigned
+        new_cells > 0,
+        new_cells + cell_number_start - (1 if (tracks.cell == 0).any() else 0),
+        cell_number_unassigned,
     )
 
     tracks["cell"] = new_cells
@@ -855,6 +859,8 @@ def linking_overlap(
     velocity_method: None | Literal["constant", "mean", "nearest"] = None,
     velocity_constant: None | float | np.ndarray = None,
     PBC_flag: Optional[Literal["none", "hdim_1", "hdim_2", "both"]] = None,
+    vertical_axis: Optional[int] = None,
+    vertical_coord: Optional[str] = None,
 ) -> pd.DataFrame:
     """Link features through time using spatial overlap tracking.
 
@@ -903,6 +909,31 @@ def linking_overlap(
     hdim1_size = mask.shape[-2]
     hdim2_size = mask.shape[-1]
     vdim_size = mask.shape[-3] if "vdim" in features else None
+
+    time_axis = internal_utils.find_axis_from_coord(mask, "time")
+    if len(mask.shape) == 4:
+        if vertical_axis is None:
+            # We need to determine vertical axis.
+            # first, find the name of the vertical axis
+            vertical_axis_name = internal_utils.find_vertical_coord_name(
+                mask, vertical_coord=vertical_coord
+            )
+            # then find our axis number.
+            vertical_axis = internal_utils.find_axis_from_coord(
+                mask, vertical_axis_name
+            )
+
+            if vertical_axis is None:
+                raise ValueError("Cannot find vertical coordinate.")
+
+        if vertical_axis < 0:
+            raise ValueError("vertical_axis must be >=0.")
+
+        hdim_1_axis, hdim_2_axis = internal_utils.find_hdim_axes_3D(
+            mask, vertical_axis=vertical_axis
+        )
+
+        mask = mask.transpose([time_axis, vertical_axis, hdim_1_axis, hdim_2_axis])
 
     if translate_method in ["drift", "predict"]:
         _bootstrap_velocities(tracks, mask)
