@@ -808,9 +808,8 @@ def _filter_stub_cells(
     tracks.loc[np.isin(tracks.cell, stub_cells), "cell"] = 0
 
     new_cells = np.unique(tracks.cell, return_inverse=True)[1]
-    new_cells[new_cells > 0] += cell_number_start - 1
     new_cells = np.where(
-        new_cells > 0, new_cells + cell_number_start - 1, cell_number_unassigned
+        new_cells > 0, new_cells + cell_number_start - (1 if (tracks.cell==0).any() else 0), cell_number_unassigned
     )
 
     tracks["cell"] = new_cells
