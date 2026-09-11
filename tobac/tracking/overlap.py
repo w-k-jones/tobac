@@ -622,7 +622,6 @@ def _find_overlaps(
         )
         for k in label_coords.keys()
     }
-    print(overlap_candidates)
     return _maximise_matching_overlaps(overlap_candidates)
 
 
