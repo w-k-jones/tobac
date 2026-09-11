@@ -78,6 +78,10 @@ def to_timestamp(
         dates = np.atleast_1d(dates)
         squeeze_output = True
 
+    # If dates is empty, return it
+    if not len(dates):
+        return dates
+
     if isinstance(next(iter(dates)), cftime.datetime):
         pd_dates = xr.CFTimeIndex(dates).to_datetimeindex()
     else:

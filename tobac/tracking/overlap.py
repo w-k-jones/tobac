@@ -166,8 +166,8 @@ def _maximise_matching_overlaps(
 ) -> dict[int, int]:
     """Find the optimum one-to-one feature matching using max weight matching.
 
-    Uses the NetworkX maximum weight matching algorithm to optimize the one-to-one mapping
-    of features to maximize total overlap area between timesteps.
+    Uses the NetworkX maximum weight matching algorithm to optimise the one-to-one mapping
+    of features to maximise total overlap area between timesteps.
 
     Parameters
     ----------
@@ -182,8 +182,11 @@ def _maximise_matching_overlaps(
 
     """
     filtered_overlaps = {k: v for k, v in overlaps.items() if len(v[0]) > 0}
+    # if no overlap candidates, return an empty dict
+    if not len(filtered_overlaps):
+        return {}
     origin_nodes = np.repeat(
-        list(overlaps.keys()), [len(v[0]) for v in overlaps.values()]
+        list(filtered_overlaps.keys()), [len(v[0]) for v in filtered_overlaps.values()]
     )
     destination_nodes, weights = np.concatenate(
         list(filtered_overlaps.values()), axis=1
@@ -202,10 +205,15 @@ def _maximise_matching_overlaps(
 
     matching = np.asarray(list(nx.max_weight_matching(nx_graph))).T + min_node
 
-    matching = matching[:, np.isin(matching[0], origin_nodes)]
-    matching = matching[:, np.argsort(matching[0])]
+    if matching.size:
+        # adjust matching to make sure it is origin_node:destination_node
+        wh_dest = np.isin(matching[0], destination_nodes)
+        matching[:, wh_dest] = matching[::-1, wh_dest]
+        matching = matching[:, np.argsort(matching[0])]
+        return dict(zip(*matching))
 
-    return dict(zip(*matching))
+    # if no matches return empty dict
+    return {}
 
 
 class FeatureBallTree(BallTree):
@@ -614,6 +622,7 @@ def _find_overlaps(
         )
         for k in label_coords.keys()
     }
+    print(overlap_candidates)
     return _maximise_matching_overlaps(overlap_candidates)
 
 
@@ -804,17 +813,20 @@ def _filter_stub_cells(
         Tracks dataframe with stub cells removed and cell IDs renumbered.
 
     """
+    # Ensure all cell values are zero or greater (they should be already)
+    tracks["cell"] = np.maximum(tracks.cell.values, 0)
     if stubs > 1:
         cell_count = tracks.groupby("cell").cell.count()
         stub_cells = cell_count.index[cell_count < stubs].values
         tracks.loc[np.isin(tracks.cell, stub_cells), "cell"] = 0
 
     new_cells = np.unique(tracks.cell, return_inverse=True)[1]
-    new_cells = np.where(
-        new_cells > 0,
-        new_cells + cell_number_start - (1 if (tracks.cell == 0).any() else 0),
-        cell_number_unassigned,
-    )
+    if (tracks.cell == 0).any():
+        new_cells = np.where(
+            new_cells > 0, new_cells + cell_number_start - 1, cell_number_unassigned
+        )
+    else:
+        new_cells = new_cells + cell_number_start
 
     tracks["cell"] = new_cells
 
@@ -933,7 +945,12 @@ def linking_overlap(
             mask, vertical_axis=vertical_axis
         )
 
-        mask = mask.transpose([time_axis, vertical_axis, hdim_1_axis, hdim_2_axis])
+        mask = mask.transpose(
+            *[
+                mask.dims[i]
+                for i in [time_axis, vertical_axis, hdim_1_axis, hdim_2_axis]
+            ]
+        )
 
     if translate_method in ["drift", "predict"]:
         _bootstrap_velocities(tracks, mask)
@@ -966,7 +983,7 @@ def linking_overlap(
         )
         _assign_cells_to_matches(tracks, matches)
         if translate_method in ["drift", "predict"]:
-            _assign_velocities(tracks, matches, origin_labels.shape, pbc_flag=PBC_flag)
+            _assign_velocities(tracks, matches, origin_labels.shape, PBC_flag=PBC_flag)
 
     if "_track_velocity" in tracks.columns:
         tracks = tracks.drop("_track_velocity", axis=1)
