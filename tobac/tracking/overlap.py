@@ -7,9 +7,9 @@ import cftime
 import numpy as np
 import pandas as pd
 import xarray as xr
-import networkx as nx
 import skimage.measure
 from scipy.sparse import coo_array
+from scipy.sparse.csgraph import min_weight_full_bipartite_matching
 from sklearn.neighbors import BallTree
 
 import tobac.utils.internal as internal_utils
@@ -166,7 +166,7 @@ def _maximise_matching_overlaps(
 ) -> dict[int, int]:
     """Find the optimum one-to-one feature matching using max weight matching.
 
-    Uses the NetworkX maximum weight matching algorithm to optimise the one-to-one mapping
+    Uses the scipy min_weight_full_bipartite_matching maximum weight matching algorithm to optimise the one-to-one mapping
     of features to maximise total overlap area between timesteps.
 
     Parameters
@@ -188,29 +188,40 @@ def _maximise_matching_overlaps(
     origin_nodes = np.repeat(
         list(filtered_overlaps.keys()), [len(v[0]) for v in filtered_overlaps.values()]
     )
+    i_map, i_nodes = np.unique(origin_nodes, return_inverse=True)
     destination_nodes, weights = np.concatenate(
         list(filtered_overlaps.values()), axis=1
     )
+    j_map, j_nodes = np.unique(destination_nodes, return_inverse=True)
 
-    min_node = min(origin_nodes.min(), destination_nodes.min())
-    max_node = max(origin_nodes.max(), destination_nodes.max())
-    size = max_node - min_node + 1
+    total_nodes = j_nodes.max() + 1
 
-    nx_graph = nx.from_scipy_sparse_array(
-        coo_array(
-            (weights, (origin_nodes - min_node, destination_nodes - min_node)),
-            shape=(size, size),
-        ),
+    # need to add null "padding" nodes to ensure maximum matching is possible
+    padding_nodes = np.arange(total_nodes, total_nodes + i_nodes.max() + 1, dtype=int)
+    size = total_nodes + padding_nodes.size
+
+    weights = np.concatenate([weights, np.full((padding_nodes.size,), -1e-15)])
+    i = np.concatenate([i_nodes, np.unique(i_nodes)])
+    j = np.concatenate([j_nodes, padding_nodes])
+
+    sparse_graph = coo_array(
+        (weights, (i, j)),
+        shape=(i_nodes.max() + 1, size),
     )
 
-    matching = np.asarray(list(nx.max_weight_matching(nx_graph))).T + min_node
+    # maximal_matching = maximum_bipartite_matching(sparse_graph.T)
 
-    if matching.size:
-        # adjust matching to make sure it is origin_node:destination_node
-        wh_dest = np.isin(matching[0], destination_nodes)
-        matching[:, wh_dest] = matching[::-1, wh_dest]
-        matching = matching[:, np.argsort(matching[0])]
-        return dict(zip(*matching))
+    i_ind, j_ind = min_weight_full_bipartite_matching(sparse_graph, maximize=True)
+
+    if i_ind.size:
+        # remove any null nodes
+        wh_null = j_ind >= total_nodes
+        i_ind = i_ind[~wh_null]
+        j_ind = j_ind[~wh_null]
+        # sort_args = np.argsort(i_ind)
+        # i_ind = i_ind[sort_args]
+        # j_ind = j_ind[sort_args]
+        return dict(zip(i_map[i_ind], j_map[j_ind]))
 
     # if no matches return empty dict
     return {}
