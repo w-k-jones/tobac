@@ -7,7 +7,7 @@ import pandas as pd
 import xarray as xr
 from scipy.sparse import coo_array, csgraph
 
-from tobac.tracking.overlap import (
+from tobac.utils.overlap import (
     _assign_velocities,
     _find_overlaps,
     _get_coords_and_centroids,
