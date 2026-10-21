@@ -81,10 +81,22 @@ def _find_overlaps_for_label(
         destination_labels.values[*coords], return_counts=True
     )
 
-    min_counts = np.minimum(counts, [destination_counts[k] for k in matched_labels])
+    min_counts = np.minimum(
+        counts,
+        [
+            destination_counts[k] if k in destination_counts else 0
+            for k in matched_labels
+        ],
+    )
+
+    wh_valid_label = min_counts > 0
+    matched_labels = matched_labels[wh_valid_label]
+    matched_counts = matched_counts[wh_valid_label]
+    min_counts = min_counts[wh_valid_label]
 
     wh = np.logical_and(
-        matched_counts >= min_count, matched_counts / min_counts >= relative_count
+        matched_counts >= min_count,
+        matched_counts / min_counts >= relative_count,
     )
 
     return matched_labels[wh], matched_counts[wh]
@@ -570,7 +582,7 @@ def _find_overlaps(
         ),
         axis=1,
     )
-    return _maximise_matching_overlaps(overlap_candidates)
+    return overlap_candidates
 
 
 def _assign_cells_to_matches(tracks: pd.DataFrame, matches: dict[int, int]) -> None:
@@ -674,9 +686,11 @@ def _assign_velocities(
             )
     else:
         if prior:
-            origin_features["_track_velocity"] = None
+            if "_track_velocity" not in origin_features:
+                origin_features["_track_velocity"] = None
         else:
-            destination_features["_track_velocity"] = None
+            if "_track_velocity" not in destination_features:
+                destination_features["_track_velocity"] = None
 
 
 def _bootstrap_velocities(
@@ -713,13 +727,15 @@ def _bootstrap_velocities(
         Updates the ``_track_velocity`` column of the features dataframes in-place.
 
     """
-    matched_overlaps = _find_overlaps(
-        origin_features,
-        destination_features,
-        destination_labels,
-        timestep,
-        min_count=min_count,
-        relative_count=relative_count,
+    matched_overlaps = _maximise_matching_overlaps(
+        _find_overlaps(
+            origin_features,
+            destination_features,
+            destination_labels,
+            timestep,
+            min_count=min_count,
+            relative_count=relative_count,
+        )
     )
     _assign_velocities(
         origin_features,
@@ -864,6 +880,67 @@ def _get_coords_and_centroids(
     return features.join(props_df)
 
 
+def _transpose_mask(
+    mask: xr.DataArray,
+    vertical_coord: Optional[str] = None,
+    vertical_axis: Optional[int] = None,
+) -> xr.DataArray:
+    """Transpose the segmentation mask for 3D data to ensure the dimensions are in the
+    expected order (time, vdim, hdim1, hdim2).
+
+    Parameters
+    ----------
+    mask : xr.DataArray
+        Input segmentation mask
+    vertical_coord : Optional[str], optional
+        vertical coordinate name, by default None
+    vertical_axis : Optional[int], optional
+        vertical axis number, by default None
+
+    Returns
+    -------
+    xr.DataArray
+        Input segmentation mask, with dimensions reordered if necessary.
+
+    Raises
+    ------
+    ValueError
+        If the vertical coord cannot be found
+    ValueError
+        If the vertical axis number is negative
+    """
+    time_axis = internal_utils.find_axis_from_coord(mask, "time")
+    if len(mask.shape) == 4:
+        if vertical_axis is None:
+            # We need to determine vertical axis.
+            # first, find the name of the vertical axis
+            vertical_axis_name = internal_utils.find_vertical_coord_name(
+                mask, vertical_coord=vertical_coord
+            )
+            # then find our axis number.
+            vertical_axis = internal_utils.find_axis_from_coord(
+                mask, vertical_axis_name
+            )
+
+            if vertical_axis is None:
+                raise ValueError("Cannot find vertical coordinate.")
+
+        if vertical_axis < 0:
+            raise ValueError("vertical_axis must be >=0.")
+
+        hdim_1_axis, hdim_2_axis = internal_utils.find_hdim_axes_3D(
+            mask, vertical_axis=vertical_axis
+        )
+
+        return mask.transpose(
+            *[
+                mask.dims[i]
+                for i in [time_axis, vertical_axis, hdim_1_axis, hdim_2_axis]
+            ]
+        )
+    return mask
+
+
 def linking_overlap(
     features: pd.DataFrame,
     mask: xr.DataArray,
@@ -937,35 +1014,9 @@ def linking_overlap(
     tracks = features.copy().set_index("feature")
     tracks["cell"] = 0
 
-    time_axis = internal_utils.find_axis_from_coord(mask, "time")
-    if len(mask.shape) == 4:
-        if vertical_axis is None:
-            # We need to determine vertical axis.
-            # first, find the name of the vertical axis
-            vertical_axis_name = internal_utils.find_vertical_coord_name(
-                mask, vertical_coord=vertical_coord
-            )
-            # then find our axis number.
-            vertical_axis = internal_utils.find_axis_from_coord(
-                mask, vertical_axis_name
-            )
-
-            if vertical_axis is None:
-                raise ValueError("Cannot find vertical coordinate.")
-
-        if vertical_axis < 0:
-            raise ValueError("vertical_axis must be >=0.")
-
-        hdim_1_axis, hdim_2_axis = internal_utils.find_hdim_axes_3D(
-            mask, vertical_axis=vertical_axis
-        )
-
-        mask = mask.transpose(
-            *[
-                mask.dims[i]
-                for i in [time_axis, vertical_axis, hdim_1_axis, hdim_2_axis]
-            ]
-        )
+    mask = _transpose_mask(
+        mask, vertical_coord=vertical_coord, vertical_axis=vertical_axis
+    )
 
     field_and_features = iter(field_and_features_over_time(mask, tracks))
 
@@ -1003,17 +1054,19 @@ def linking_overlap(
                 )
                 bootstrap = False
 
-            matched_overlaps = _find_overlaps(
-                origin_features,
-                destination_features,
-                labels,
-                timestep,
-                min_count=minimum_overlap,
-                relative_count=minimum_relative_overlap,
-                translate_method=translate_method,
-                velocity_method=velocity_method,
-                velocity_constant=velocity_constant,
-                PBC_flag=PBC_flag,
+            matched_overlaps = _maximise_matching_overlaps(
+                _find_overlaps(
+                    origin_features,
+                    destination_features,
+                    labels,
+                    timestep,
+                    min_count=minimum_overlap,
+                    relative_count=minimum_relative_overlap,
+                    translate_method=translate_method,
+                    velocity_method=velocity_method,
+                    velocity_constant=velocity_constant,
+                    PBC_flag=PBC_flag,
+                )
             )
             _assign_cells_to_matches(tracks, matched_overlaps)
             if translate_method in ["drift", "predict"]:
