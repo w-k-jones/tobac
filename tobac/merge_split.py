@@ -35,6 +35,7 @@ def merge_split_MEST(
     max_h1: Optional[int] = None,
     min_h2: Optional[int] = None,
     max_h2: Optional[int] = None,
+    return_as: Literal["dataset", "dataframe"] = "dataset",
 ) -> xr.Dataset:
     """
     Search for merging splitting cells  in tobac tracking data using a minimum
@@ -94,9 +95,14 @@ def merge_split_MEST(
         Maximum point in hdim_2, exclusive. max_h2-min_h2 should be the size of
         hdim_2.
 
+    return_as : str('dataset', 'dataframe')
+        Whether to return the output as an xarray dataset of track and cell properties,
+        or to return the input pandas dataframe dataset with new columns containing
+        track, merge and split properties.
+
     Returns
     -------
-    d : xarray.core.dataset.Dataset
+    xarray.Dataset (if return_as = 'dataset')
         xarray dataset of tobac merge/split cells with parent and child designations.
 
         Parent/child variables include:
@@ -106,6 +112,10 @@ def merge_split_MEST(
         - feature_parent_track_id: The associated parent track id for each feature. This is not the same as the cell id number.
         - track_child_cell_count: The total number of features belonging to all child cells of a given track id.
         - cell_child_feature_count: The total number of features for each cell.
+
+    pandas.Dataframe (if return_as = 'dataframe')
+        pandas dataframe of feature properties, consisting of the input dataframe
+        with track, merge and split information as new columns
 
     Examples
     --------
@@ -324,4 +334,63 @@ def merge_split_MEST(
         coords={feature_dim: feature_id, cell_dim: cell_id, track_dim: track_id},
     )
 
-    return merge_split_ds
+    if return_as == "dataset":
+        return merge_split_ds
+    if return_as == "dataframe":
+        return add_track_info_to_dataframe(tracks, merge_split_ds)
+
+    raise ValueError(
+        f"'return_as' must be one of 'dataset', 'dataframe', received {return_as}"
+    )
+
+
+def add_track_info_to_dataframe(
+    tracks: pd.DataFrame, merge_split_ds: xr.Dataset
+) -> pd.DataFrame:
+    """Add merge split information provided by merge_split_MEST in an
+    xarray Dataset format to the pandas dataframe of the input tracks
+
+    Parameters
+    ----------
+    tracks : pd.DataFrame
+        pandas dataframe including feature and cell information
+    merge_split_ds : xr.Dataset
+        xarray dataset produced by merge_split_MEST
+
+    Returns
+    -------
+    pd.DataFrame
+        the input tracks dataframe with merge/split information added
+    """
+    index_name = tracks.index.name or "index"
+    tracks = tracks.reset_index().set_index(tracks.feature)
+
+    # Add track id column
+    tracks["track"] = -1
+    tracks.loc[merge_split_ds.feature.values, "track"] = (
+        merge_split_ds.feature_parent_track_id.values
+    )
+
+    # Add track time
+    tracks["time_track"] = pd.NaT
+    tracks["time_track"] = (
+        tracks["time"]
+        - tracks.time.groupby(tracks.track).min().loc[tracks.track].values
+    )
+
+    # Add merge and split columns for the last/first feature before a merge/split event
+    cell_last_features = tracks.feature.groupby(tracks.cell).last()
+    merge_features = cell_last_features.loc[
+        merge_split_ds.cell[merge_split_ds.cell_ends_with_merge].values
+    ]
+    tracks["ends_with_merge"] = False
+    tracks.loc[merge_features, "ends_with_merge"] = True
+
+    cell_first_features = tracks.feature.groupby(tracks.cell).first()
+    split_features = cell_first_features.loc[
+        merge_split_ds.cell[merge_split_ds.cell_starts_with_split].values
+    ]
+    tracks["starts_with_split"] = False
+    tracks.loc[split_features, "starts_with_split"] = True
+
+    return tracks.set_index(index_name)

@@ -1,6 +1,7 @@
 """Module to test tobac.merge_split"""
 
 import pandas as pd
+import xarray as xr
 import numpy as np
 import pytest
 
@@ -90,7 +91,6 @@ def test_merge_split_MEST():
     )
 
     # These cells should NOT have merged together.
-    print(mergesplit_output_unmerged["track"])
     assert len(mergesplit_output_unmerged["track"]) == 2
 
 
@@ -348,4 +348,177 @@ def test_merge_split_MEST_3D():
             test_features,
             dxy=1,
             distance=20,
+        )
+
+
+def test_merge_split_MEST_return_dataframe():
+    """Test that the return_as='dataframe' option works, and that the resulting
+    properties match those in the dataset return option
+    """
+    cell_1 = tbtest.generate_single_feature(
+        1,
+        1,
+        min_h1=0,
+        max_h1=100,
+        min_h2=0,
+        max_h2=100,
+        frame_start=0,
+        num_frames=2,
+        spd_h1=20,
+        spd_h2=20,
+        start_date=datetime.datetime(2022, 1, 1, 0),
+    )
+    cell_1["feature"] = [1, 3]
+
+    cell_2 = tbtest.generate_single_feature(
+        1,
+        100,
+        min_h1=0,
+        max_h1=101,
+        min_h2=0,
+        max_h2=101,
+        frame_start=0,
+        num_frames=2,
+        spd_h1=20,
+        spd_h2=-20,
+        start_date=datetime.datetime(2022, 1, 1, 0),
+    )
+    cell_2["feature"] = [2, 4]
+    cell_3 = tbtest.generate_single_feature(
+        30,
+        50,
+        min_h1=0,
+        max_h1=100,
+        min_h2=0,
+        max_h2=100,
+        frame_start=2,
+        num_frames=2,
+        spd_h1=20,
+        spd_h2=0,
+        start_date=datetime.datetime(2022, 1, 1, 0, 10),
+    )
+    cell_3["feature"] = [5, 6]
+    features = pd.concat([cell_1, cell_2, cell_3])
+    output = tbtrack.linking_trackpy(features, None, 1, 1, v_max=40)
+
+    dist_between = np.sqrt(
+        np.power(
+            output[output["frame"] == 1].iloc[0]["hdim_1"]
+            - output[output["frame"] == 1].iloc[1]["hdim_1"],
+            2,
+        )
+        + np.power(
+            output[output["frame"] == 1].iloc[0]["hdim_2"]
+            - output[output["frame"] == 1].iloc[1]["hdim_2"],
+            2,
+        )
+    )
+
+    # Test a successful merger
+    mergesplit_output_dataset = mergesplit.merge_split_MEST(
+        output, dxy=10, distance=(dist_between + 50) * 10
+    )
+
+    assert isinstance(mergesplit_output_dataset, xr.Dataset)
+
+    mergesplit_df = mergesplit.merge_split_MEST(
+        output, dxy=10, distance=(dist_between + 50) * 10, return_as="dataframe"
+    )
+
+    assert isinstance(mergesplit_df, pd.DataFrame)
+
+    assert np.all(
+        mergesplit_output_dataset.feature_parent_track_id.sel(
+            feature=mergesplit_df.feature.values
+        ).values
+        == mergesplit_df.track.values
+    )
+
+    assert np.all(
+        np.isin(
+            mergesplit_df.cell[mergesplit_df.ends_with_merge],
+            mergesplit_output_dataset.cell[
+                mergesplit_output_dataset.cell_ends_with_merge
+            ],
+        )
+    )
+
+    assert np.all(
+        np.isin(
+            mergesplit_df.cell[mergesplit_df.starts_with_split],
+            mergesplit_output_dataset.cell[
+                mergesplit_output_dataset.cell_starts_with_split
+            ],
+        )
+    )
+
+
+def test_merge_split_MEST_return_as_error():
+    """Test that a return_as value other than ['dataset', 'dataframe'] raises
+    an exception
+    """
+    cell_1 = tbtest.generate_single_feature(
+        1,
+        1,
+        min_h1=0,
+        max_h1=100,
+        min_h2=0,
+        max_h2=100,
+        frame_start=0,
+        num_frames=2,
+        spd_h1=20,
+        spd_h2=20,
+        start_date=datetime.datetime(2022, 1, 1, 0),
+    )
+    cell_1["feature"] = [1, 3]
+
+    cell_2 = tbtest.generate_single_feature(
+        1,
+        100,
+        min_h1=0,
+        max_h1=101,
+        min_h2=0,
+        max_h2=101,
+        frame_start=0,
+        num_frames=2,
+        spd_h1=20,
+        spd_h2=-20,
+        start_date=datetime.datetime(2022, 1, 1, 0),
+    )
+    cell_2["feature"] = [2, 4]
+    cell_3 = tbtest.generate_single_feature(
+        30,
+        50,
+        min_h1=0,
+        max_h1=100,
+        min_h2=0,
+        max_h2=100,
+        frame_start=2,
+        num_frames=2,
+        spd_h1=20,
+        spd_h2=0,
+        start_date=datetime.datetime(2022, 1, 1, 0, 10),
+    )
+    cell_3["feature"] = [5, 6]
+    features = pd.concat([cell_1, cell_2, cell_3])
+    output = tbtrack.linking_trackpy(features, None, 1, 1, v_max=40)
+
+    dist_between = np.sqrt(
+        np.power(
+            output[output["frame"] == 1].iloc[0]["hdim_1"]
+            - output[output["frame"] == 1].iloc[1]["hdim_1"],
+            2,
+        )
+        + np.power(
+            output[output["frame"] == 1].iloc[0]["hdim_2"]
+            - output[output["frame"] == 1].iloc[1]["hdim_2"],
+            2,
+        )
+    )
+
+    with pytest.raises(
+        ValueError, match="'return_as' must be one of 'dataset', 'dataframe', received "
+    ):
+        mergesplit.merge_split_MEST(
+            output, dxy=10, distance=(dist_between + 50) * 10, return_as="error"
         )
