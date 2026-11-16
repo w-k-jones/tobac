@@ -134,9 +134,7 @@ class TestMergeSplitOverlap:
         assert "time_track" in result.columns
         assert len(result) == len(tracks)
         # note: the output index values are preserved but get name='index'
-        pd.testing.assert_index_equal(
-            result.index, tracks.index, check_names=False
-        )
+        pd.testing.assert_index_equal(result.index, tracks.index, check_names=False)
         assert result.track.nunique() == 1
         assert (result.track == 1).all()
 
@@ -235,12 +233,8 @@ class TestMergeSplitOverlap:
                 ([1], slice(5, 9), slice(5, 9), 2),
             ],
         )
-        result_high = merge_split_overlap(
-            tracks, mask, minimum_relative_overlap=0.5
-        )
-        result_low = merge_split_overlap(
-            tracks, mask, minimum_relative_overlap=0.0625
-        )
+        result_high = merge_split_overlap(tracks, mask, minimum_relative_overlap=0.5)
+        result_low = merge_split_overlap(tracks, mask, minimum_relative_overlap=0.0625)
 
         assert result_high.track.tolist() == [1, 2]
         assert result_low.track.tolist() == [1, 1]
@@ -252,7 +246,12 @@ class TestMergeSplitOverlap:
             times,
             [
                 ([0], slice(2, 5), slice(8, 10), 1),  # right edge
-                ([1], slice(2, 5), slice(0, 2), 2),  # left edge: moved +2 across boundary
+                (
+                    [1],
+                    slice(2, 5),
+                    slice(0, 2),
+                    2,
+                ),  # left edge: moved +2 across boundary
             ],
             grid_size=10,
         )
@@ -273,7 +272,9 @@ class TestMergeSplitOverlap:
         result_no_pbc = merge_split_overlap(tracks, mask, PBC_flag="none", **kwargs)
         assert result_no_pbc.track.tolist() == [1, 2]
 
-        result_wrong_pbc = merge_split_overlap(tracks, mask, PBC_flag="hdim_1", **kwargs)
+        result_wrong_pbc = merge_split_overlap(
+            tracks, mask, PBC_flag="hdim_1", **kwargs
+        )
         assert result_wrong_pbc.track.tolist() == [1, 2]
 
     def test_basic_merge_3d(self):
@@ -516,9 +517,7 @@ class TestMergeSplitOverlap:
         pd.testing.assert_frame_equal(tracks, tracks_copy)
         xr.testing.assert_equal(mask, mask_copy)
         # index values are preserved (the output index gets name='index')
-        pd.testing.assert_index_equal(
-            result.index, tracks.index, check_names=False
-        )
+        pd.testing.assert_index_equal(result.index, tracks.index, check_names=False)
         # original columns keep their order, new columns are appended
         assert list(result.columns) == list(tracks.columns) + ["track", "time_track"]
 
@@ -583,7 +582,11 @@ class TestMergeSplitOverlap:
         """End-to-end with three separate blobs: three cells map to three tracks."""
         data = tobac.testing.make_sample_data_2D_3blobs(data_type="xarray")
         labels, features = tobac.feature_detection_multithreshold(
-            data, 1000, threshold=5, position_threshold="weighted_abs", return_labels=True
+            data,
+            1000,
+            threshold=5,
+            position_threshold="weighted_abs",
+            return_labels=True,
         )
         tracks = tobac.tracking.linking_overlap(
             features,

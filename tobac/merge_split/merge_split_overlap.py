@@ -87,9 +87,11 @@ def merge_split_overlap(
             tracks, track_number_unassigned=track_number_unassigned
         )
         tracks = tracks.set_index(tracks_in.index)
-        tracks.insert(tracks_in.columns.get_loc("feature"), "feature", tracks_in.feature)
+        tracks.insert(
+            tracks_in.columns.get_loc("feature"), "feature", tracks_in.feature
+        )
         return tracks
-    
+
     mask = _transpose_mask(
         mask, vertical_coord=vertical_coord, vertical_axis=vertical_axis
     )
@@ -187,8 +189,14 @@ def merge_split_overlap(
             origin_features = destination_features
 
     # Now perform connected components using cell_map to create tracks
-    origin_cells = np.concatenate(origin_cells) if len(origin_cells) else np.array([], dtype=int)
-    destination_cells = np.concatenate(destination_cells) if len(destination_cells) else np.array([], dtype=int)
+    origin_cells = (
+        np.concatenate(origin_cells) if len(origin_cells) else np.array([], dtype=int)
+    )
+    destination_cells = (
+        np.concatenate(destination_cells)
+        if len(destination_cells)
+        else np.array([], dtype=int)
+    )
 
     cell_graph = coo_array(
         (np.ones(origin_cells.size), (origin_cells, destination_cells)),
