@@ -60,14 +60,89 @@ def merge_split_overlap(
     vertical_axis: Optional[int] = None,
     vertical_coord: Optional[str] = None,
     memory: int = 0,
+    max_time_gap: Optional[Union[pd.Timedelta, float]] = None,
 ) -> pd.DataFrame:
+    """Detect merges/splits of tracked cells based on spatial overlap of feature
+    masks between time steps. Unlike `linking_overlap`, this function calculates
+    a many-to-many mapping of features between time steps, and then groups the
+    cells into tracks based on connected components.
+
+    Parameters
+    ----------
+    tracks : pd.DataFrame
+        Dataframe of features with columns 'feature', 'cell', and 'time', as
+        produced by linking.
+    mask : xr.DataArray
+        The feature mask corresponding to the features in `tracks`, produced
+        either by segmentation or from feature detection with `return_labels=True`.
+    cell_number_unassigned : int, optional
+        The cell number used for unassigned in linking, by default -1
+    track_number_start : int, optional
+        The track number given to the first detected track, by default 1
+    track_number_unassigned : int, optional
+        The track number for features with no track detected, by default -1
+    track_unassigned_cells : bool, optional
+        Whether to include features that are not assigned a cell in merges/splits
+        if they overlap a tracked feature, by default False
+    minimum_overlap : int, optional
+        The minimum number of pixels that two features must overlap to be considered
+        as a potential merge or split, by default 1
+    minimum_relative_overlap : float, optional
+        The minimum relative overlap between two features to be considered as a
+        potential merge or split as a fraction of the area of the smaller feature,
+        by default 0
+    translate_method : Optional[Literal["constant", "drift", "predict"]], optional
+        The method to use for translating features between time steps, by default None
+    velocity_method : Optional[Literal["constant", "mean", "nearest"]], optional
+        The method to use for calculating velocity for untracked features when
+        translate method is "drift" or "predict", by default None
+    velocity_constant : Optional[Union[float, np.ndarray]], optional
+        The constant velocity to use when translate method is "constant" or when
+        velocity_method is "constant" in grid spaces per second, by default None
+    PBC_flag : Optional[Literal["none", "hdim_1", "hdim_2", "both"]], optional
+        Whether to detect merges/splits on features that translate across periodic
+        boundaries, by default None
+    vertical_axis : Optional[int], optional
+        The vertical axis in the input mask, by default None
+    vertical_coord : Optional[str], optional
+        The vertical coordinate name in the input mask, by default None
+    memory : int, optional
+        Number of output timesteps features allowed to vanish for to
+        be still considered tracked. Default is 0.
+        See `max_time_gap` for limiting time gaps between timesteps.
+
+        .. warning::
+            This parameter should be used with caution, as it
+            can lead to erroneous trajectory linking,
+            especially for data with low time resolution.
+
+    max_time_gap : pd.Timedelta or float, optional
+        Maximum allowed time gap between a feature and the timestep it is
+        matched to: before matching, origin features whose time difference to
+        the current timestep exceeds `max_time_gap` are discarded, so tracks
+        are not extended across time gaps larger than `max_time_gap`. This
+        also applies to features kept as linking candidates via `memory`, so
+        a cell cannot contain gaps between consecutive features that are
+        larger than `max_time_gap`. If a float is given, it is interpreted as
+        seconds. Default is None (no limit).
+
+    Returns
+    -------
+    pd.DataFrame
+        The input `tracks` dataframe with an additional column 'track' containing the
+        track number assigned to each feature based on merges/splits. Features that
+        are not assigned to a track will have the value `track_number_unassigned` in
+        the 'track' column.
+    """
 
     assert (
         "cell" in tracks.columns
     ), "tracks input is missing 'cell' column, please perform tracking before calculating merge/splits"
     tracks_in = tracks
-    index_name = tracks.index.name or "index"
     tracks = tracks.copy().set_index("feature")
+
+    if isinstance(max_time_gap, (int, float)):
+        max_time_gap = pd.to_timedelta(max_time_gap, unit="s")
 
     if track_unassigned_cells:
         original_max_cell = tracks.cell.max()
@@ -110,6 +185,12 @@ def merge_split_overlap(
         destination_features = _get_coords_and_centroids(
             features_t, labels, PBC_flag=PBC_flag
         )
+
+        if max_time_gap is not None:
+            origin_features = origin_features[
+                (to_timestamp(timestep) - to_timestamp(origin_features.time))
+                <= max_time_gap
+            ]
 
         if len(origin_features) and len(destination_features):
             # Assign velocities from existing tracks
