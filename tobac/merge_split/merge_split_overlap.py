@@ -91,24 +91,12 @@ def merge_split_overlap(
     features_t = features_t[features_t.cell != cell_number_unassigned]
     origin_features = _get_coords_and_centroids(features_t, labels, PBC_flag=PBC_flag)
 
-    try:
-        frame, timestep, labels, features_t = next(field_and_features)
-    except StopIteration:  # Only one timestep, no tracks detected
-        tracks = _assign_track_times(
-            tracks, track_number_unassigned=track_number_unassigned
+    for frame, timestep, labels, features_t in field_and_features:
+        features_t = features_t[features_t.cell != cell_number_unassigned]
+        destination_features = _get_coords_and_centroids(
+            features_t, labels, PBC_flag=PBC_flag
         )
-        if track_unassigned_cells:
-            tracks.loc[tracks.cell > original_max_cell, "cell"] = cell_number_unassigned
-        # Reset index to match features input
-        tracks = tracks.reset_index().set_index("index")
-        return tracks
 
-    features_t = features_t[features_t.cell != cell_number_unassigned]
-    destination_features = _get_coords_and_centroids(
-        features_t, labels, PBC_flag=PBC_flag
-    )
-
-    while True:
         if len(origin_features) and len(destination_features):
             # Assign velocities from existing tracks
             cell_overlap = np.intersect1d(
@@ -136,14 +124,6 @@ def merge_split_overlap(
                 labels.shape,
                 PBC_flag=PBC_flag,
                 prior=True,
-            )
-            _assign_velocities(
-                origin_features,
-                destination_features,
-                matches,
-                labels.shape,
-                PBC_flag=PBC_flag,
-                prior=False,
             )
 
             matched_overlaps = _find_overlaps(
@@ -199,15 +179,6 @@ def merge_split_overlap(
             )
         else:
             origin_features = destination_features
-
-        try:
-            frame, timestep, labels, features_t = next(field_and_features)
-        except StopIteration:
-            break
-        features_t = features_t[features_t.cell != cell_number_unassigned]
-        destination_features = _get_coords_and_centroids(
-            features_t, labels, PBC_flag=PBC_flag
-        )
 
     # Now perform connected components using cell_map to create tracks
     cell_graph = coo_array(
