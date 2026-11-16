@@ -9,6 +9,7 @@ import xarray as xr
 from scipy.sparse import coo_array
 from scipy.sparse.csgraph import min_weight_full_bipartite_matching
 
+from tobac.utils.datetime import to_timestamp
 from tobac.utils.generators import field_and_features_over_time
 from tobac.utils.overlap import (
     _assign_velocities,
@@ -341,6 +342,11 @@ def linking_overlap(
     """
     tracks = features.copy().set_index("feature")
     tracks["cell"] = 0
+
+    if isinstance(max_time_gap, (int, float)):
+        max_time_gap = pd.to_timedelta(max_time_gap, unit="s")
+    if isinstance(time_cell_min, (int, float)):
+        time_cell_min = pd.to_timedelta(time_cell_min, unit="s")
 
     mask = _transpose_mask(
         mask, vertical_coord=vertical_coord, vertical_axis=vertical_axis
