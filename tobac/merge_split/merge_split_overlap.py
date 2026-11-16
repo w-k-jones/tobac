@@ -66,7 +66,8 @@ def merge_split_overlap(
         "cell" in tracks.columns
     ), "tracks input is missing 'cell' column, please perform tracking before calculating merge/splits"
     tracks_in = tracks
-    tracks = tracks.copy().reset_index().set_index("feature")
+    index_name = tracks.index.name or "index"
+    tracks = tracks.copy().set_index("feature")
 
     if track_unassigned_cells:
         original_max_cell = tracks.cell.max()
@@ -79,8 +80,16 @@ def merge_split_overlap(
     max_cell = tracks.cell.max()
 
     tracks["track"] = track_number_unassigned
-    cell_map = {}
 
+    # Return early if no tracks are present
+    if not len(tracks):
+        tracks = _assign_track_times(
+            tracks, track_number_unassigned=track_number_unassigned
+        )
+        tracks = tracks.set_index(tracks_in.index)
+        tracks.insert(tracks_in.columns.get_loc("feature"), "feature", tracks_in.feature)
+        return tracks
+    
     mask = _transpose_mask(
         mask, vertical_coord=vertical_coord, vertical_axis=vertical_axis
     )
@@ -91,6 +100,9 @@ def merge_split_overlap(
     features_t = features_t[features_t.cell != cell_number_unassigned]
     origin_features = _get_coords_and_centroids(features_t, labels, PBC_flag=PBC_flag)
 
+    matched_overlaps = {}
+    origin_cells = []
+    destination_cells = []
     for frame, timestep, labels, features_t in field_and_features:
         features_t = features_t[features_t.cell != cell_number_unassigned]
         destination_features = _get_coords_and_centroids(
@@ -150,14 +162,8 @@ def merge_split_overlap(
                 np.concatenate(matched_overlaps.values)
             ].values
             wh_different = origin_cell_matches != destination_cell_matches
-            cell_map.update(
-                dict(
-                    zip(
-                        origin_cell_matches[wh_different],
-                        destination_cell_matches[wh_different],
-                    )
-                )
-            )
+            origin_cells.append(origin_cell_matches[wh_different])
+            destination_cells.append(destination_cell_matches[wh_different])
 
         # construct new origin_features
         if (memory > 0) and len(origin_features):
@@ -181,8 +187,11 @@ def merge_split_overlap(
             origin_features = destination_features
 
     # Now perform connected components using cell_map to create tracks
+    origin_cells = np.concatenate(origin_cells) if len(origin_cells) else np.array([], dtype=int)
+    destination_cells = np.concatenate(destination_cells) if len(destination_cells) else np.array([], dtype=int)
+
     cell_graph = coo_array(
-        (np.ones(len(cell_map)), (list(cell_map.keys()), list(cell_map.values()))),
+        (np.ones(origin_cells.size), (origin_cells, destination_cells)),
         shape=(max_cell + 1, max_cell + 1),
     )
     cell_to_track_map = csgraph.connected_components(cell_graph)[
@@ -217,6 +226,6 @@ def merge_split_overlap(
     )
 
     # Reset index to match features input and replace features column in the correct location
-    tracks = tracks.set_index("index")
+    tracks = tracks.set_index(tracks_in.index)
     tracks.insert(tracks_in.columns.get_loc("feature"), "feature", tracks_in.feature)
     return tracks
