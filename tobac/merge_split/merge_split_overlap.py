@@ -7,6 +7,7 @@ import pandas as pd
 import xarray as xr
 from scipy.sparse import coo_array, csgraph
 
+from tobac.utils.datetime import to_timestamp
 from tobac.utils.overlap import (
     _assign_velocities,
     _find_overlaps,
@@ -25,14 +26,14 @@ def _assign_track_times(
     ----------
     tracks : pd.DataFrame
         Tracks dataframe with 'track' and 'time' columns.
-    cell_number_unassigned : int
+    track_number_unassigned : int
         Value assigned to unassigned tracks.
 
     Returns
     -------
     pd.DataFrame
-        Tracks dataframe with new 'time_cell' column containing time
-        relative to cell start.
+        Tracks dataframe with new 'time_track' column containing time
+        relative to track start.
 
     """
     tracks["time_track"] = (
@@ -70,8 +71,8 @@ def merge_split_overlap(
     Parameters
     ----------
     tracks : pd.DataFrame
-        Dataframe of features with columns 'feature', 'cell', and 'time', as
-        produced by linking.
+        Dataframe of features with columns 'feature', 'cell', 'time', and
+        'frame', as produced by linking.
     mask : xr.DataArray
         The feature mask corresponding to the features in `tracks`, produced
         either by segmentation or from feature detection with `return_labels=True`.
@@ -121,18 +122,19 @@ def merge_split_overlap(
         matched to: before matching, origin features whose time difference to
         the current timestep exceeds `max_time_gap` are discarded, so tracks
         are not extended across time gaps larger than `max_time_gap`. This
-        also applies to features kept as linking candidates via `memory`, so
-        a cell cannot contain gaps between consecutive features that are
+        also applies to features kept as merge/split candidates via `memory`,
+        so a track cannot contain gaps between consecutive features that are
         larger than `max_time_gap`. If a float is given, it is interpreted as
         seconds. Default is None (no limit).
 
     Returns
     -------
     pd.DataFrame
-        The input `tracks` dataframe with an additional column 'track' containing the
-        track number assigned to each feature based on merges/splits. Features that
-        are not assigned to a track will have the value `track_number_unassigned` in
-        the 'track' column.
+        The input `tracks` dataframe with two additional columns: 'track',
+        containing the track number assigned to each feature based on
+        merges/splits (features not assigned to a track get the value
+        `track_number_unassigned`), and 'time_track', the time since the start
+        of each track (`NaT` for unassigned tracks).
     """
 
     assert (
