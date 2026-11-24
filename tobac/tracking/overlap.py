@@ -903,6 +903,32 @@ def _get_coords_and_centroids(
     return features.join(props_df)
 
 
+def _filter_labeled_features(features: pd.DataFrame) -> pd.DataFrame:
+    """Drop features that have no corresponding label in the mask.
+
+    Features whose 'feature' value is not present in the labeled mask get NaN
+    geometry columns ('_count', '_coords', '_centroid') from the join in
+    :func:`_get_coords_and_centroids`. Such features can never overlap a
+    labeled region, so they can never be linked; they are removed from the
+    linking candidates here (but remain in the tracks dataframe and end up
+    unassigned in the output).
+
+    Parameters
+    ----------
+    features : pd.DataFrame
+        Features dataframe with geometry columns attached.
+
+    Returns
+    -------
+    pd.DataFrame
+        Features that have a corresponding label in the mask.
+
+    """
+    if "_count" not in features.columns:
+        return features
+    return features[features["_count"].notna()]
+
+
 def linking_overlap(
     features: pd.DataFrame,
     mask: xr.DataArray,
@@ -1006,6 +1032,9 @@ def linking_overlap(
         - 'cell_unfiltered': (only if `save_unfiltered_cell` is True) cell
           numbers before stub filtering
         Features not linked to any cell are assigned cell_number_unassigned.
+        Features whose 'feature' value has no corresponding label in `mask`
+        can never be linked; they are kept in the output with
+        cell_number_unassigned.
 
     """
     tracks = features.copy().set_index("feature")
@@ -1023,7 +1052,9 @@ def linking_overlap(
     field_and_features = iter(field_and_features_over_time(mask, tracks))
 
     _, _, labels, features_t = next(field_and_features)
-    origin_features = _get_coords_and_centroids(features_t, labels, PBC_flag=PBC_flag)
+    origin_features = _filter_labeled_features(
+        _get_coords_and_centroids(features_t, labels, PBC_flag=PBC_flag)
+    )
 
     bootstrap = True if translate_method in ["drift", "predict"] else False
     tracks = _run_overlap_linking(
@@ -1182,8 +1213,8 @@ def _run_overlap_linking(
     """
     matched_overlaps = {}
     for frame, timestep, labels, features_t in field_and_features:
-        destination_features = _get_coords_and_centroids(
-            features_t, labels, PBC_flag=PBC_flag
+        destination_features = _filter_labeled_features(
+            _get_coords_and_centroids(features_t, labels, PBC_flag=PBC_flag)
         )
 
         if max_time_gap is not None:
@@ -1563,7 +1594,9 @@ def append_tracks_overlap(
         used to recalculate the initial centroids and velocities of the
         boundary features. Must include at least the last
         `2 + memory` timesteps present in `tracks`. The labels at
-        those timesteps must match the 'feature' values of `tracks`.
+        those timesteps should match the 'feature' values of `tracks`;
+        features of `tracks` without a corresponding label in `tracks_mask`
+        can never be linked forward and are kept unassigned in the output.
     features : pd.DataFrame or sequence of pd.DataFrame
         Features dataframe(s) for the future time period(s), with a 'feature'
         column and position columns ('hdim_1', 'hdim_2', and optionally
@@ -1625,7 +1658,9 @@ def append_tracks_overlap(
         The combined tracks (original `tracks` plus the newly tracked
         features) with added columns 'cell' and 'time_cell' (and
         'cell_unfiltered' if `tracks` contained it), in the same format as
-        :func:`linking_overlap`.
+        :func:`linking_overlap`. Features whose 'feature' value has no
+        corresponding label in `tracks_mask` or `mask` can never be linked;
+        they are kept in the output with cell_number_unassigned.
 
     Raises
     ------
@@ -1787,14 +1822,10 @@ def append_tracks_overlap(
 
     seed_idx = tracks_work.index[wh_seed]
     if len(seed_idx) and len(enriched_all):
-        origin_features = enriched_all.loc[seed_idx]
-        if origin_features["_count"].isna().any():
-            raise ValueError(
-                "tracks_mask does not label all features of tracks at the "
-                "boundary timesteps; the labels must match the 'feature' "
-                "values of tracks."
-            )
-        origin_features = origin_features.copy()
+        # Features of tracks without a corresponding label in tracks_mask have
+        # no mask region and can never be linked forward; they are filtered
+        # out of the linking candidates but remain in the output (unassigned)
+        origin_features = _filter_labeled_features(enriched_all.loc[seed_idx]).copy()
         origin_features["frame"] = (
             pd.DatetimeIndex(to_timestamp(origin_features.time))
             .map(time_to_frame)

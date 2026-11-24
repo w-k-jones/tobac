@@ -822,3 +822,91 @@ class TestAppendTracksOverlap:
         )
         assert tobac.testing.check_tracking_identical(full, appended)
         assert np.unique(appended.cell).tolist() == [1, 2]
+
+
+class TestUnlabeledFeatures:
+    """Features whose 'feature' value has no corresponding label in the mask
+    can never be linked; they must be kept in the output (unassigned) but
+    excluded from the linking candidates, also with predictive tracking."""
+
+    def test_linking_overlap_unlabeled_feature(self):
+        times = pd.date_range("2024-01-01", periods=3, freq="h")
+        mask, features = _make_mask_and_features(times, [([0, 1, 2], 5, 5, 1)])
+        # add a feature with no corresponding label in the mask at t=1
+        extra = pd.DataFrame(
+            [
+                {
+                    "feature": 99,
+                    "frame": 1,
+                    "time": times[1],
+                    "hdim_1": 20.0,
+                    "hdim_2": 20.0,
+                }
+            ]
+        )
+        features = pd.concat([features, extra], ignore_index=True)
+        for params in [
+            dict(),
+            dict(translate_method="predict", velocity_method="nearest"),
+        ]:
+            tracks = linking_overlap(features, mask, **params)
+            # the unlabeled feature remains in the output, unassigned
+            assert len(tracks) == 4
+            cell_by_feature = tracks.set_index("feature").cell
+            assert cell_by_feature[99] == -1
+            assert cell_by_feature[[1, 2, 3]].tolist() == [1, 1, 1]
+            assert pd.isna(tracks.set_index("feature").loc[99, "time_cell"])
+
+    def test_append_unlabeled_features_predict(self):
+        """Append with predictive tracking where tracks_mask does not label a
+        boundary feature of tracks and the new mask does not label a new
+        feature: both are kept unassigned in the output and the result matches
+        full linking."""
+        mask, features = _moving_blobs_data(n_times=4)
+        times = pd.DatetimeIndex(mask.time.values)
+        # feature 99 at t=1 (original period) and feature 98 at t=3 (new
+        # period) have no corresponding label in the mask
+        extra = pd.DataFrame(
+            [
+                {
+                    "feature": 99,
+                    "frame": 1,
+                    "time": times[1],
+                    "hdim_1": 25.0,
+                    "hdim_2": 25.0,
+                },
+                {
+                    "feature": 98,
+                    "frame": 3,
+                    "time": times[3],
+                    "hdim_1": 25.0,
+                    "hdim_2": 20.0,
+                },
+            ]
+        )
+        features = pd.concat([features, extra], ignore_index=True)
+        params = dict(translate_method="predict", velocity_method="nearest")
+
+        full = linking_overlap(features, mask, **params)
+        cell_by_feature = full.set_index("feature").cell
+        assert cell_by_feature[99] == -1
+        assert cell_by_feature[98] == -1
+
+        init = linking_overlap(
+            features[features.time <= times[1]],
+            mask.isel(time=slice(0, 2)),
+            **params,
+        )
+        appended = append_tracks_overlap(
+            init,
+            mask.isel(time=slice(0, 2)),
+            features[features.time > times[1]],
+            mask.isel(time=slice(2, None)),
+            **params,
+        )
+        # unlabeled features remain in the output, unassigned
+        assert len(appended) == len(full)
+        cell_by_feature = appended.set_index("feature").cell
+        assert cell_by_feature[99] == -1
+        assert cell_by_feature[98] == -1
+        assert tobac.testing.check_tracking_identical(full, appended)
