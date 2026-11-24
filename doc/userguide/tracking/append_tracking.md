@@ -147,7 +147,7 @@ When `use_latlon=True`, a few parameters are slightly different than when `use_l
 
 If your original tracks were created with {func}`tobac.tracking.linking_overlap` (see {doc}`overlap_tracking`), use {func}`tobac.tracking.append_tracks_overlap` to continue tracking with new features and segmentation masks. The `features` and `mask` arguments describe only the new (future) time periods and may each be a single object or a list of objects (one per period); lists are combined before tracking. Rows at timesteps already present in `tracks` are allowed and ignored — only timesteps not already in `tracks` are newly tracked.
 
-Because overlap linking needs the labeled regions of the features at the boundary between the two periods, the mask of the original period must be passed separately as `tracks_mask`. Only the last `max(stubs, memory)` timesteps present in `tracks` are required in `tracks_mask`; it is used to recalculate the initial centroids and velocities of the boundary features.
+Because overlap linking needs the labeled regions of the features at the boundary between the two periods, the mask of the original period must be passed separately as `tracks_mask`. Only the last `2 + memory` timesteps present in `tracks` are required in `tracks_mask`; it is used to recalculate the initial centroids and velocities of the boundary features.
 
 ```python
 import tobac
