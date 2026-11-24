@@ -162,10 +162,10 @@ tracks_batch1 = tobac.tracking.linking_overlap(
 # --- Step 2: new data arrives: features and labels for the new period only,
 #            plus the mask of the last timestep(s) of batch 1 ---
 tracks_extended = tobac.tracking.append_tracks_overlap(
-    tracks=tracks_batch1,
-    features=features_batch2,          # only the future timesteps
-    mask=labels_batch2,               # only the future timesteps
-    tracks_mask=labels_batch1.isel(time=slice(-2, None)),  # end of batch 1
+    tracks_batch1,
+    labels_batch1.isel(time=slice(-2, None)),  # tracks_mask: end of batch 1
+    features_batch2,                            # only the future timesteps
+    labels_batch2,                              # only the future timesteps
 )
 ```
 

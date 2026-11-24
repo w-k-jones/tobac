@@ -1425,9 +1425,9 @@ def _datetime_index_union(*indexes: pd.DatetimeIndex) -> pd.DatetimeIndex:
 
 def append_tracks_overlap(
     tracks: pd.DataFrame,
+    tracks_mask: Union[xr.DataArray, Sequence[xr.DataArray]],
     features: Union[pd.DataFrame, Sequence[pd.DataFrame]],
     mask: Union[xr.DataArray, Sequence[xr.DataArray]],
-    tracks_mask: Union[xr.DataArray, Sequence[xr.DataArray]],
     stubs: int = 1,
     cell_number_start: int = 1,
     cell_number_unassigned: int = -1,
@@ -1474,6 +1474,12 @@ def append_tracks_overlap(
         :func:`linking_overlap`), the unfiltered cell numbers are used to
         link the new features, so that cells filtered out as stubs in `tracks`
         keep their identity; the output then also contains 'cell_unfiltered'.
+    tracks_mask : xr.DataArray or sequence of xr.DataArray
+        Labeled mask(s) for the (end of the) original time period of `tracks`,
+        used to recalculate the initial centroids and velocities of the
+        boundary features. Must include at least the last
+        `max(stubs, memory)` timesteps present in `tracks`. The labels at
+        those timesteps must match the 'feature' values of `tracks`.
     features : pd.DataFrame or sequence of pd.DataFrame
         Features dataframe(s) for the future time period(s), with a 'feature'
         column and position columns ('hdim_1', 'hdim_2', and optionally
@@ -1483,12 +1489,6 @@ def append_tracks_overlap(
         Labeled mask(s) for the future time period(s), matching `features`.
         Must contain all timesteps of the new `features` that are not already
         in `tracks`.
-    tracks_mask : xr.DataArray or sequence of xr.DataArray
-        Labeled mask(s) for the (end of the) original time period of `tracks`,
-        used to recalculate the initial centroids and velocities of the
-        boundary features. Must include at least the last
-        `max(stubs, memory)` timesteps present in `tracks`. The labels at
-        those timesteps must match the 'feature' values of `tracks`.
     stubs : int, optional
         Minimum number of timesteps for a cell to be retained, applied to the
         combined tracks. Default is 1.
