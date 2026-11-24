@@ -5,7 +5,7 @@
 **Enhancements for Users**
 
 - tobac now declares minimum supported versions of its dependencies (e.g. numpy >= 1.23, pandas >= 2.0, xarray >= 2023.4).
-- Added `tobac.tracking.append_tracks_overlap`, which continues overlap tracking ({func}`tobac.tracking.linking_overlap`) of an existing tracked DataFrame with one or more new sets of features dataframes and segmentation masks for future time periods, producing the same tracks as running `linking_overlap` on the full dataset at once. Also added a `save_unfiltered_cell` option to `linking_overlap`, which saves the cell numbers from before stub filtering in a `cell_unfiltered` column; this is required for `append_tracks_overlap` when `stubs > 1` or `time_cell_min` is set.
+- Added `tobac.tracking.append_tracks_overlap`, which continues overlap tracking ({func}`tobac.tracking.linking_overlap`) of an existing tracked DataFrame with one or more new sets of features dataframes and segmentation masks for future time periods, producing the same tracks as running `linking_overlap` on the full dataset at once. The mask of the original period is passed separately as `tracks_mask`, which only needs to cover the last `max(stubs, memory)` timesteps of the tracks. Also added a `save_unfiltered_cell` option to `linking_overlap`, which saves the cell numbers from before stub filtering in a `cell_unfiltered` column; this is required for `append_tracks_overlap` when `stubs > 1` or `time_cell_min` is set.
 
 **Internal Enhancements**
 

@@ -64,11 +64,6 @@ def _make_mask_and_features(times, blobs, grid_size=30):
 def _moving_blobs_data(n_times=6, grid_size=30):
     """Two blobs moving at constant velocity (+1,+1) and (-1,+1) per timestep."""
     times = pd.date_range("2024-01-01", periods=n_times, freq="h")
-    blobs = [
-        (list(range(n_times)), 5, 5, 1),
-        (list(range(n_times)), 20, 5, 1),
-    ]
-    # shift centers per frame
     mask_data = np.zeros((n_times, grid_size, grid_size), dtype=int)
     feature_rows = []
     feature_id = 0
@@ -160,10 +155,35 @@ class TestAppendTracksOverlap:
         init_features = features[features.time <= times[1]]
         init = linking_overlap(init_features, init_mask, **params)
 
-        # append everything at once
-        appended = append_tracks_overlap(init, features, mask, **params)
+        # append everything at once, passing only the future features/mask;
+        # tracks_mask only needs the last max(stubs, memory) = 1 timestep of
+        # the original tracks
+        appended = append_tracks_overlap(
+            init,
+            features[features.time > times[1]],
+            mask.isel(time=slice(2, None)),
+            tracks_mask=mask.isel(time=slice(1, 2)),
+            **params,
+        )
         assert len(appended) == len(features)
         assert tobac.testing.check_tracking_identical(full, appended)
+
+        # duplicate features/timesteps already in tracks are allowed and
+        # filtered out: passing the full features and mask gives the same result
+        appended_dup = append_tracks_overlap(
+            init, features, mask, tracks_mask=mask.isel(time=slice(1, 2)), **params
+        )
+        assert tobac.testing.check_tracking_identical(full, appended_dup)
+
+        # a longer tracks_mask (covering more of the original period) also works
+        appended_full_tm = append_tracks_overlap(
+            init,
+            features[features.time > times[1]],
+            mask.isel(time=slice(2, None)),
+            tracks_mask=mask,
+            **params,
+        )
+        assert tobac.testing.check_tracking_identical(full, appended_full_tm)
 
     def test_append_one_timestep_at_a_time(self):
         mask, features = _moving_blobs_data(n_times=6)
@@ -176,12 +196,11 @@ class TestAppendTracksOverlap:
         )
         curr = init
         for i in range(2, len(times)):
-            # pass only the new timestep's features, but a mask that includes
-            # the boundary timestep(s) of the existing tracks
             curr = append_tracks_overlap(
                 curr,
                 features[features.time == times[i]],
-                mask.isel(time=slice(0, i + 1)),
+                mask.isel(time=[i]),
+                tracks_mask=mask.isel(time=[i - 1]),
                 **params,
             )
         assert tobac.testing.check_tracking_identical(full, curr)
@@ -197,8 +216,14 @@ class TestAppendTracksOverlap:
         )
         # append two future periods as lists of (features, mask)
         feats_list = [features[features.time == times[i]] for i in (2, 3)]
-        mask_list = [mask.isel(time=slice(0, 3)), mask.isel(time=slice(0, 4))]
-        appended = append_tracks_overlap(init, feats_list, mask_list, **params)
+        mask_list = [mask.isel(time=[2]), mask.isel(time=[3])]
+        appended = append_tracks_overlap(
+            init,
+            feats_list,
+            mask_list,
+            tracks_mask=mask.isel(time=slice(1, 2)),
+            **params,
+        )
         assert tobac.testing.check_tracking_identical(
             linking_overlap(
                 features[features.time <= times[3]],
@@ -220,7 +245,13 @@ class TestAppendTracksOverlap:
         init = linking_overlap(
             features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
         )
-        appended = append_tracks_overlap(init, features, mask, **params)
+        appended = append_tracks_overlap(
+            init,
+            features[features.time > times[1]],
+            mask.isel(time=slice(2, None)),
+            tracks_mask=mask.isel(time=slice(1, 2)),
+            **params,
+        )
         assert tobac.testing.check_tracking_identical(full, appended)
 
     def test_append_predict_stubs_requires_unfiltered(self):
@@ -235,8 +266,17 @@ class TestAppendTracksOverlap:
         init = linking_overlap(
             features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
         )
+        # stubs=3 -> tracks_mask must cover the last 3 timesteps of tracks
+        # (here all 2 timesteps of the initial period)
+        tracks_mask = mask.isel(time=slice(0, 2))
         with pytest.raises(ValueError, match="save_unfiltered_cell=True"):
-            append_tracks_overlap(init, features, mask, **params)
+            append_tracks_overlap(
+                init,
+                features[features.time > times[1]],
+                mask.isel(time=slice(2, None)),
+                tracks_mask=tracks_mask,
+                **params,
+            )
 
         # with the unfiltered cell numbers saved, appending works and matches
         # full tracking
@@ -247,7 +287,13 @@ class TestAppendTracksOverlap:
             **params,
         )
         full_u = linking_overlap(features, mask, save_unfiltered_cell=True, **params)
-        appended = append_tracks_overlap(init_u, features, mask, **params)
+        appended = append_tracks_overlap(
+            init_u,
+            features[features.time > times[1]],
+            mask.isel(time=slice(2, None)),
+            tracks_mask=tracks_mask,
+            **params,
+        )
         assert "cell_unfiltered" in appended.columns
         assert tobac.testing.check_tracking_identical(full_u, appended)
         assert tobac.testing.check_tracking_identical(
@@ -267,7 +313,13 @@ class TestAppendTracksOverlap:
         init = linking_overlap(
             features[features.time <= times[0]], mask.isel(time=slice(0, 1)), **params
         )
-        appended = append_tracks_overlap(init, features, mask, **params)
+        appended = append_tracks_overlap(
+            init,
+            features[features.time > times[0]],
+            mask.isel(time=slice(1, None)),
+            tracks_mask=mask.isel(time=[0]),
+            **params,
+        )
         assert tobac.testing.check_tracking_identical(full, appended)
         assert appended.cell.tolist() == [1, 1]
 
@@ -288,10 +340,14 @@ class TestAppendTracksOverlap:
         )
         curr = init
         for i in range(1, len(times)):
+            # tracks_mask must cover the last timestep currently in curr
+            last_time = pd.DatetimeIndex(curr.time.unique()).max()
+            tracks_mask = mask.sel(time=[last_time])
             curr = append_tracks_overlap(
                 curr,
                 features[features.time == times[i]],
-                mask.isel(time=slice(0, i + 1)),
+                mask.isel(time=[i]),
+                tracks_mask=tracks_mask,
                 **params,
             )
         assert tobac.testing.check_tracking_identical(full, curr)
@@ -309,7 +365,13 @@ class TestAppendTracksOverlap:
         init = linking_overlap(
             features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
         )
-        appended = append_tracks_overlap(init, features, mask, **params)
+        appended = append_tracks_overlap(
+            init,
+            features[features.time > times[1]],
+            mask.isel(time=slice(2, None)),
+            tracks_mask=mask.isel(time=[1]),
+            **params,
+        )
         assert tobac.testing.check_tracking_identical(full, appended)
         assert appended.cell.tolist() == [1, 1, -1]
 
@@ -319,20 +381,25 @@ class TestAppendTracksOverlap:
         init = linking_overlap(
             features[features.time <= times[1]], mask.isel(time=slice(0, 2))
         )
+        future_features = features[features.time > times[1]]
+        future_mask = mask.isel(time=slice(2, None))
+        tracks_mask = mask.isel(time=slice(1, 2))
         # tracks without a cell column
         with pytest.raises(ValueError, match="cell"):
-            append_tracks_overlap(features, features, mask)
-        # mask does not include the last timestep of tracks
-        with pytest.raises(ValueError, match="last timestep"):
+            append_tracks_overlap(features, future_features, future_mask, tracks_mask)
+        # tracks_mask does not include the last timestep of tracks
+        with pytest.raises(ValueError, match="tracks_mask must include"):
             append_tracks_overlap(
-                init, features[features.time == times[2]], mask.isel(time=[2])
+                init, future_features, future_mask, mask.isel(time=[2])
             )
         # new features at a timestep not in the mask
         with pytest.raises(ValueError, match="not in the mask"):
-            append_tracks_overlap(init, features, mask.isel(time=slice(0, 3)))
+            append_tracks_overlap(
+                init, features, mask.isel(time=slice(0, 3)), tracks_mask
+            )
         # mismatched list lengths
         with pytest.raises(ValueError, match="same length"):
-            append_tracks_overlap(init, [features, features], [mask])
+            append_tracks_overlap(init, [features, features], [mask], tracks_mask)
 
     def test_append_output_structure(self):
         mask, features = _moving_blobs_data(n_times=4)
@@ -340,7 +407,12 @@ class TestAppendTracksOverlap:
         init = linking_overlap(
             features[features.time <= times[1]], mask.isel(time=slice(0, 2))
         )
-        appended = append_tracks_overlap(init, features, mask)
+        appended = append_tracks_overlap(
+            init,
+            features[features.time > times[1]],
+            mask.isel(time=slice(2, None)),
+            tracks_mask=mask.isel(time=slice(1, 2)),
+        )
         # no internal columns left behind
         for col in appended.columns:
             assert not col.startswith("_")
@@ -397,7 +469,12 @@ class TestAppendTracksOverlap:
             **params,
         )
         appended = append_tracks_overlap(
-            init, features, mask, vertical_coord="vdim", **params
+            init,
+            features[features.time > times_u[1]],
+            mask.isel(time=slice(2, None)),
+            tracks_mask=mask.isel(time=[1]),
+            vertical_coord="vdim",
+            **params,
         )
         assert tobac.testing.check_tracking_identical(full, appended)
 
@@ -428,7 +505,13 @@ class TestAppendTracksOverlap:
             labels.isel(time=slice(0, split)),
             **params,
         )
-        appended = append_tracks_overlap(init, features, labels, **params)
+        appended = append_tracks_overlap(
+            init,
+            features[features.time > times[split - 1]],
+            labels.isel(time=slice(split, None)),
+            tracks_mask=labels.isel(time=[split - 1]),
+            **params,
+        )
         assert tobac.testing.check_tracking_identical(full, appended)
 
         # append one timestep at a time
@@ -437,7 +520,8 @@ class TestAppendTracksOverlap:
             curr = append_tracks_overlap(
                 curr,
                 features[features.time == times[i]],
-                labels.isel(time=slice(0, i + 1)),
+                labels.isel(time=[i]),
+                tracks_mask=labels.isel(time=[i - 1]),
                 **params,
             )
         assert tobac.testing.check_tracking_identical(full, curr)
@@ -473,7 +557,13 @@ class TestAppendTracksOverlap:
             labels.isel(time=slice(0, split)),
             **params,
         )
-        appended = append_tracks_overlap(init, features, labels, **params)
+        appended = append_tracks_overlap(
+            init,
+            features[features.time > times[split - 1]],
+            labels.isel(time=slice(split, None)),
+            tracks_mask=labels.isel(time=[split - 1]),
+            **params,
+        )
         assert tobac.testing.check_tracking_identical(full, appended)
         assert np.unique(appended.cell).tolist() == [1, 2, 3]
 
@@ -514,7 +604,13 @@ class TestAppendTracksOverlap:
         init = linking_overlap(
             features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
         )
-        appended = append_tracks_overlap(init, features, mask, **params)
+        appended = append_tracks_overlap(
+            init,
+            features[features.time > times[1]],
+            mask.isel(time=slice(2, None)),
+            tracks_mask=mask.isel(time=[1]),
+            **params,
+        )
         assert appended.cell.tolist() == [1, 1, 1]
         assert tobac.testing.check_tracking_identical(full, appended)
 
@@ -529,13 +625,16 @@ class TestAppendTracksOverlap:
         )
         params = dict()
         full = linking_overlap(features, mask, **params)
-        # blob A tracked as one cell; blob B features unmatched (no overlap with
-        # anything at their own timesteps... actually B at t=0 and t=2 are far
-        # apart in time but same place - with memory=0 they don't link)
         init = linking_overlap(
             features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
         )
-        appended = append_tracks_overlap(init, features, mask, **params)
+        appended = append_tracks_overlap(
+            init,
+            features[features.time > times[1]],
+            mask.isel(time=slice(2, None)),
+            tracks_mask=mask.isel(time=[1]),
+            **params,
+        )
         assert tobac.testing.check_tracking_identical(full, appended)
 
     def test_append_stubs_requires_unfiltered(self):
@@ -548,9 +647,17 @@ class TestAppendTracksOverlap:
         init = linking_overlap(
             features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
         )
+        # stubs=3 -> tracks_mask must cover the last 3 timesteps of tracks
+        tracks_mask = mask.isel(time=slice(0, 2))
         # without the unfiltered cell numbers, appending raises
         with pytest.raises(ValueError, match="save_unfiltered_cell=True"):
-            append_tracks_overlap(init, features, mask, **params)
+            append_tracks_overlap(
+                init,
+                features[features.time > times[1]],
+                mask.isel(time=slice(2, None)),
+                tracks_mask=tracks_mask,
+                **params,
+            )
 
         # with the unfiltered cell numbers, appending reproduces full tracking
         full_u = linking_overlap(features, mask, save_unfiltered_cell=True, **params)
@@ -560,7 +667,13 @@ class TestAppendTracksOverlap:
             save_unfiltered_cell=True,
             **params,
         )
-        appended = append_tracks_overlap(init_u, features, mask, **params)
+        appended = append_tracks_overlap(
+            init_u,
+            features[features.time > times[1]],
+            mask.isel(time=slice(2, None)),
+            tracks_mask=tracks_mask,
+            **params,
+        )
         assert "cell_unfiltered" in appended.columns
         assert tobac.testing.check_tracking_identical(full_u, appended)
         assert tobac.testing.check_tracking_identical(
@@ -591,7 +704,13 @@ class TestAppendTracksOverlap:
         )
         # time_cell_min filtering also requires the unfiltered cell numbers
         with pytest.raises(ValueError, match="save_unfiltered_cell=True"):
-            append_tracks_overlap(init, features, mask, **params)
+            append_tracks_overlap(
+                init,
+                features[features.time > times[1]],
+                mask.isel(time=slice(2, None)),
+                tracks_mask=mask.isel(time=[1]),
+                **params,
+            )
 
         full_u = linking_overlap(features, mask, save_unfiltered_cell=True, **params)
         init_u = linking_overlap(
@@ -600,7 +719,13 @@ class TestAppendTracksOverlap:
             save_unfiltered_cell=True,
             **params,
         )
-        appended = append_tracks_overlap(init_u, features, mask, **params)
+        appended = append_tracks_overlap(
+            init_u,
+            features[features.time > times[1]],
+            mask.isel(time=slice(2, None)),
+            tracks_mask=mask.isel(time=[1]),
+            **params,
+        )
         assert tobac.testing.check_tracking_identical(full_u, appended)
         assert appended.set_index("feature").cell.to_dict() == {
             1: 1,
@@ -634,6 +759,12 @@ class TestAppendTracksOverlap:
             labels.isel(time=slice(0, split)),
             **params,
         )
-        appended = append_tracks_overlap(init, features, labels, **params)
+        appended = append_tracks_overlap(
+            init,
+            features[features.time > times[split - 1]],
+            labels.isel(time=slice(split, None)),
+            tracks_mask=labels.isel(time=[split - 1]),
+            **params,
+        )
         assert tobac.testing.check_tracking_identical(full, appended)
         assert np.unique(appended.cell).tolist() == [1, 2]

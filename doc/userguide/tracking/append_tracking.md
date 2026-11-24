@@ -145,7 +145,9 @@ When `use_latlon=True`, a few parameters are slightly different than when `use_l
 (append-tracking-overlap)=
 ### Appending to Overlap Tracks
 
-If your original tracks were created with {func}`tobac.tracking.linking_overlap` (see {doc}`overlap_tracking`), use {func}`tobac.tracking.append_tracks_overlap` to continue tracking with new features and segmentation masks. Because overlap linking needs the labeled regions of the features at the boundary between the two periods, the `mask` passed to `append_tracks_overlap` must include the last timestep of `tracks` (and, for `memory > 0`, the preceding `memory` timesteps of `tracks`). The `features` and `mask` arguments may each be a single object or a list of objects (one per future time period); lists are combined before tracking. Only timesteps not already present in `tracks` are newly tracked.
+If your original tracks were created with {func}`tobac.tracking.linking_overlap` (see {doc}`overlap_tracking`), use {func}`tobac.tracking.append_tracks_overlap` to continue tracking with new features and segmentation masks. The `features` and `mask` arguments describe only the new (future) time periods and may each be a single object or a list of objects (one per period); lists are combined before tracking. Rows at timesteps already present in `tracks` are allowed and ignored — only timesteps not already in `tracks` are newly tracked.
+
+Because overlap linking needs the labeled regions of the features at the boundary between the two periods, the mask of the original period must be passed separately as `tracks_mask`. Only the last `max(stubs, memory)` timesteps present in `tracks` are required in `tracks_mask`; it is used to recalculate the initial centroids and velocities of the boundary features.
 
 ```python
 import tobac
@@ -157,12 +159,13 @@ tracks_batch1 = tobac.tracking.linking_overlap(
     save_unfiltered_cell=True,  # needed if stubs > 1 or time_cell_min is set
 )
 
-# --- Step 2: new data arrives (features and labels for the new period,
-#            including the last timestep of batch 1 in the mask) ---
+# --- Step 2: new data arrives: features and labels for the new period only,
+#            plus the mask of the last timestep(s) of batch 1 ---
 tracks_extended = tobac.tracking.append_tracks_overlap(
     tracks=tracks_batch1,
-    features=features_batch2,
-    mask=labels_batch2_with_boundary,
+    features=features_batch2,          # only the future timesteps
+    mask=labels_batch2,               # only the future timesteps
+    tracks_mask=labels_batch1.isel(time=slice(-2, None)),  # end of batch 1
 )
 ```
 

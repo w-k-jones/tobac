@@ -1260,6 +1260,7 @@ def _recompute_track_velocities(
     tracks: pd.DataFrame,
     domain_size: tuple[int],
     PBC_flag: Optional[Literal["none", "hdim_1", "hdim_2", "both"]] = None,
+    centroids: Optional[dict] = None,
 ) -> None:
     """Recompute per-feature track velocities from the tracked positions.
 
@@ -1280,6 +1281,11 @@ def _recompute_track_velocities(
         for 3D data.
     PBC_flag : {'none', 'hdim_1', 'hdim_2', 'both'}, optional
         Periodic boundary condition specification.
+    centroids : dict, optional
+        Mapping of feature index to mask-derived centroid array (ordered as
+        the position columns). Where available, centroids are used instead of
+        the position columns, matching the velocities assigned during linking
+        (which are based on the mask-derived centroids).
 
     Returns
     -------
@@ -1295,15 +1301,21 @@ def _recompute_track_velocities(
     tracks["_track_velocity"] = None
     if not len(tracks):
         return
+    positions = np.array(tracks[pos_cols].to_numpy(dtype=float), copy=True)
+    if centroids:
+        for fid, centroid in centroids.items():
+            if fid in tracks.index:
+                positions[tracks.index.get_loc(fid)] = np.asarray(centroid, dtype=float)
     for cell, group in tracks.groupby("cell"):
         if cell == 0 or len(group) < 2:
             continue
         group = group.sort_values("time")
+        group_pos = positions[[tracks.index.get_loc(i) for i in group.index]]
         dt = group.time.diff().dt.total_seconds().to_numpy()
         velocities = (
             _calc_distances_pbcs(
-                group[pos_cols].to_numpy()[:-1],
-                group[pos_cols].to_numpy()[1:],
+                group_pos[:-1],
+                group_pos[1:],
                 domain_size=domain_size,
                 PBC_flag=PBC_flag,
             )
@@ -1369,10 +1381,53 @@ def _combine_features_and_masks(
     return combined_features, combined_mask
 
 
+def _combine_masks(
+    mask: Union[xr.DataArray, Sequence[xr.DataArray]],
+) -> xr.DataArray:
+    """Combine one or more masks into a single mask along the time dimension.
+
+    Parameters
+    ----------
+    mask : xr.DataArray or sequence of xr.DataArray
+        Mask(s) with a 'time' coordinate.
+
+    Returns
+    -------
+    xr.DataArray
+        Combined mask with duplicated timesteps removed (first occurrence
+        kept).
+
+    """
+    if isinstance(mask, xr.DataArray):
+        mask_list = [mask]
+    else:
+        mask_list = list(mask)
+    if len(mask_list) == 0:
+        raise ValueError("At least one mask is required.")
+    if len(mask_list) == 1:
+        combined_mask = mask_list[0]
+    else:
+        combined_mask = xr.concat(mask_list, dim="time")
+    mask_time_index = pd.DatetimeIndex(
+        to_timestamp(combined_mask.coords["time"].values)
+    )
+    combined_mask = combined_mask.isel(time=~mask_time_index.duplicated(keep="first"))
+    return combined_mask
+
+
+def _datetime_index_union(*indexes: pd.DatetimeIndex) -> pd.DatetimeIndex:
+    """Return the sorted union of datetime indexes, without duplicates."""
+    result = indexes[0]
+    for idx in indexes[1:]:
+        result = result.union(idx)
+    return result[~result.duplicated()]
+
+
 def append_tracks_overlap(
     tracks: pd.DataFrame,
     features: Union[pd.DataFrame, Sequence[pd.DataFrame]],
     mask: Union[xr.DataArray, Sequence[xr.DataArray]],
+    tracks_mask: Union[xr.DataArray, Sequence[xr.DataArray]],
     stubs: int = 1,
     cell_number_start: int = 1,
     cell_number_unassigned: int = -1,
@@ -1396,16 +1451,19 @@ def append_tracks_overlap(
     logic as :func:`linking_overlap`. This enables incremental tracking
     without re-running the linking on the whole dataset.
 
-    The `features` and `mask` arguments may each be a single object or a
-    sequence of objects (one per future time period); sequences are combined
-    before tracking. The mask must include the last timestep present in
-    `tracks` (and, for `memory` > 0, the preceding `memory` timesteps of
-    `tracks`), because the labeled regions of the boundary features are needed
-    to compute the overlaps into the first new timestep. The `features`
-    dataframe(s) must contain rows for all timesteps of the mask that are not
-    already present in `tracks`; rows at timesteps already present in `tracks`
-    are ignored (the tracked rows are kept as they are). Only timesteps that
-    are not present in `tracks` are newly tracked.
+    The `features` and `mask` arguments describe only the new (future) time
+    periods and may each be a single object or a sequence of objects (one per
+    period); sequences are combined before tracking. Rows of `features` at
+    timesteps that are already present in `tracks` are allowed and ignored (the
+    tracked rows are kept as they are); only timesteps that are not present in
+    `tracks` are newly tracked.
+
+    The labeled regions of the features at the end of the original period are
+    needed to compute the overlaps (and the initial centroids and velocities)
+    into the first new timestep. These are taken from the separate
+    `tracks_mask` argument, which must include at least the last
+    `max(stubs, memory)` timesteps present in `tracks`; earlier timesteps of
+    the original period are not needed.
 
     Parameters
     ----------
@@ -1419,10 +1477,18 @@ def append_tracks_overlap(
     features : pd.DataFrame or sequence of pd.DataFrame
         Features dataframe(s) for the future time period(s), with a 'feature'
         column and position columns ('hdim_1', 'hdim_2', and optionally
-        'vdim'), as for :func:`linking_overlap`.
+        'vdim'), as for :func:`linking_overlap`. May include rows at timesteps
+        already present in `tracks`; those are ignored.
     mask : xr.DataArray or sequence of xr.DataArray
         Labeled mask(s) for the future time period(s), matching `features`.
-        Must include the last timestep of `tracks`.
+        Must contain all timesteps of the new `features` that are not already
+        in `tracks`.
+    tracks_mask : xr.DataArray or sequence of xr.DataArray
+        Labeled mask(s) for the (end of the) original time period of `tracks`,
+        used to recalculate the initial centroids and velocities of the
+        boundary features. Must include at least the last
+        `max(stubs, memory)` timesteps present in `tracks`. The labels at
+        those timesteps must match the 'feature' values of `tracks`.
     stubs : int, optional
         Minimum number of timesteps for a cell to be retained, applied to the
         combined tracks. Default is 1.
@@ -1452,7 +1518,7 @@ def append_tracks_overlap(
         Name of the vertical coordinate. If None, tries to auto-detect.
     memory : int, optional
         Number of output timesteps features allowed to vanish for to still be
-        considered tracked. Default is 0. The mask should include the last
+        considered tracked. Default is 0. `tracks_mask` must include the last
         `memory` + 1 timesteps of `tracks` so that features kept via `memory`
         can be matched.
     max_time_gap : pd.Timedelta or float, optional
@@ -1475,10 +1541,10 @@ def append_tracks_overlap(
     Raises
     ------
     ValueError
-        If `tracks` has no 'cell' or 'feature' column, if the mask does not
-        include the last timestep of `tracks`, if the new features contain
-        timesteps that are not in the mask, or if `stubs` > 1 (or
-        `time_cell_min` is set) and `tracks` does not contain
+        If `tracks` has no 'cell' or 'feature' column, if `tracks_mask` does
+        not include the last `max(stubs, memory)` timesteps of `tracks`, if the
+        new features contain timesteps that are not in `mask`, or if `stubs` >
+        1 (or `time_cell_min` is set) and `tracks` does not contain
         'cell_unfiltered'.
 
     """
@@ -1507,23 +1573,48 @@ def append_tracks_overlap(
     mask = _prepare_mask_time_first(
         mask, vertical_axis=vertical_axis, vertical_coord=vertical_coord
     )
+    tracks_mask = _prepare_mask_time_first(
+        _combine_masks(tracks_mask),
+        vertical_axis=vertical_axis,
+        vertical_coord=vertical_coord,
+    )
 
-    mask_times = to_timestamp(mask.coords["time"].values)
-    mask_time_index = pd.DatetimeIndex(mask_times)
+    mask_time_index = pd.DatetimeIndex(to_timestamp(mask.coords["time"].values))
     mask_time_index = mask_time_index[~mask_time_index.duplicated()]
-    time_to_frame = pd.Series(np.arange(len(mask_time_index)), index=mask_time_index)
+    tracks_mask_time_index = pd.DatetimeIndex(
+        to_timestamp(tracks_mask.coords["time"].values)
+    )
+    tracks_mask_time_index = tracks_mask_time_index[
+        ~tracks_mask_time_index.duplicated()
+    ]
+    tracks_mask_local_frame = pd.Series(
+        np.arange(len(tracks_mask_time_index)), index=tracks_mask_time_index
+    )
+
+    # Combined time axis (original boundary timesteps + new timesteps) used for
+    # frame numbering, so that the memory window arithmetic is consistent
+    # across the boundary
+    all_time_index = _datetime_index_union(mask_time_index, tracks_mask_time_index)
+    time_to_frame = pd.Series(np.arange(len(all_time_index)), index=all_time_index)
 
     tracks_times = pd.DatetimeIndex(to_timestamp(tracks.time.unique()))
     if len(tracks_times) == 0:
         raise ValueError("tracks must contain at least one timestep.")
     last_track_time = tracks_times.max()
-    if last_track_time not in mask_time_index:
+
+    # tracks_mask must cover at least the last max(stubs, memory) timesteps of
+    # tracks, so that the boundary features' regions (and centroids/velocities)
+    # can be recalculated
+    n_window = max(stubs, memory, 1)
+    required_times = tracks_times[-n_window:]
+    missing_tracks_times = required_times.difference(tracks_mask_time_index)
+    if len(missing_tracks_times) > 0:
         raise ValueError(
-            "The mask must include the last timestep of tracks "
-            f"({last_track_time}) so that the overlaps of the boundary "
-            "features into the first new timestep can be computed. Include "
-            "the last timestep(s) of the original period in the mask."
+            "tracks_mask must include at least the last "
+            f"max(stubs, memory) = {n_window} timesteps of tracks; missing: "
+            f"{list(missing_tracks_times)}."
         )
+
     new_feature_times = pd.DatetimeIndex(to_timestamp(new_features.time.unique()))
     missing_times = new_feature_times.difference(mask_time_index)
     if len(missing_times) > 0:
@@ -1532,8 +1623,8 @@ def append_tracks_overlap(
             f"{list(missing_times)}."
         )
 
-    # Combine the original tracks with the new features (only at timesteps
-    # that are not already tracked)
+    # Combine the original tracks with the new features (rows at timesteps
+    # that are already tracked are duplicates and are filtered out)
     new_features_only = new_features[~new_features.time.isin(tracks_times)]
     combined_features = pd.concat([tracks, new_features_only], ignore_index=True)
 
@@ -1551,20 +1642,43 @@ def append_tracks_overlap(
         tracks_work["cell"] = tracks_work["cell"].astype(tracks["cell"].dtype)
     tracks_work = tracks_work.set_index("feature")
 
-    # Recompute the velocities of the original tracks from their positions,
-    # needed for predictive translation at the boundary
+    # Recalculate the region geometry (coords, counts, centroids) of the
+    # original tracks at the timesteps covered by tracks_mask; used for the
+    # seed origins and to recalculate the initial velocities
     domain_size = mask.shape[1:]
-    _recompute_track_velocities(tracks_work, domain_size, PBC_flag=PBC_flag)
+    enriched_at_time = {}
+    centroids = {}
+    for t in tracks_times:
+        if t in tracks_mask_time_index:
+            labels_t = tracks_mask.isel(time=int(tracks_mask_local_frame[t]))
+            features_t = tracks_work.loc[tracks_work.time == t]
+            if len(features_t):
+                enriched = _get_coords_and_centroids(
+                    features_t, labels_t, PBC_flag=PBC_flag
+                )
+                enriched_at_time[t] = enriched
+                centroids.update(zip(enriched.index, enriched["_centroid"]))
+
+    # Recompute the velocities of the original tracks, using the mask-derived
+    # centroids where available (as during linking) and the feature positions
+    # otherwise; needed for predictive translation at the boundary
+    _recompute_track_velocities(
+        tracks_work, domain_size, PBC_flag=PBC_flag, centroids=centroids
+    )
+    # attach the recomputed velocities to the enriched frames (used as seeds)
+    for enriched in enriched_at_time.values():
+        enriched["_track_velocity"] = tracks_work.loc[enriched.index, "_track_velocity"]
 
     # Determine the timesteps of tracks that can serve as linking candidates
     # (origins) for the first new timestep: the last `memory` + 1 timesteps of
-    # tracks that are present in the mask. Features whose cell continues at a
-    # later timestep were already matched, so they are not candidates.
+    # tracks that are present in tracks_mask. Features whose cell continues at
+    # a later timestep were already matched, so they are not candidates.
     last_track_frame = time_to_frame[last_track_time]
     seed_times = [
         t
         for t in tracks_times
-        if t in mask_time_index and (last_track_frame - time_to_frame[t]) <= memory
+        if t in tracks_mask_time_index
+        and (last_track_frame - time_to_frame[t]) <= memory
     ]
     cell_last_time = tracks_work.groupby("cell").time.max()
     tracks_work["_cell_last_time"] = cell_last_time[tracks_work["cell"].values].values
@@ -1574,12 +1688,18 @@ def append_tracks_overlap(
 
     seed_parts = []
     for t in seed_times:
-        labels_t = mask.isel(time=int(time_to_frame[t]))
-        features_t = tracks_work.loc[wh_seed & (tracks_work.time == t)]
-        if len(features_t):
-            seed_parts.append(
-                _get_coords_and_centroids(features_t, labels_t, PBC_flag=PBC_flag)
-            )
+        if t not in enriched_at_time:
+            continue
+        seed_idx = tracks_work.index[wh_seed & (tracks_work.time == t)]
+        seed_part = enriched_at_time[t].loc[seed_idx]
+        if len(seed_part):
+            if seed_part["_count"].isna().any():
+                raise ValueError(
+                    "tracks_mask does not label all features of tracks at "
+                    f"timestep {t}; the labels must match the 'feature' values "
+                    "of tracks."
+                )
+            seed_parts.append(seed_part)
     if seed_parts:
         origin_features = pd.concat(seed_parts)
         origin_features["frame"] = (
@@ -1594,19 +1714,21 @@ def append_tracks_overlap(
             )
         )
 
-    # Iterate over the timesteps of the mask that are not already tracked
+    # Iterate over the timesteps of the new mask that are not already tracked
     loop_features = combined_features.set_index("feature")
     loop_features["frame"] = (
         pd.DatetimeIndex(to_timestamp(loop_features.time)).map(time_to_frame).to_numpy()
     )
 
     def new_timesteps_iter():
-        for frame, timestep, labels, features_t in field_and_features_over_time(
+        for _, timestep, labels, features_t in field_and_features_over_time(
             mask, loop_features
         ):
             if to_timestamp(timestep) in tracks_times:
                 continue
-            yield frame, timestep, labels, features_t
+            yield int(
+                time_to_frame[to_timestamp(timestep)]
+            ), timestep, labels, features_t
 
     bootstrap = bool(
         translate_method in ["drift", "predict"] and not len(origin_features)
