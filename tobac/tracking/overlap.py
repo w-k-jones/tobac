@@ -1359,9 +1359,14 @@ def _combine_features_and_masks(
         raise ValueError("At least one features dataframe and one mask are required.")
     combined_features = pd.concat(features_list, ignore_index=True)
     if "feature" in combined_features.columns:
-        # chunks may overlap at their boundaries; keep the first occurrence
+        # chunks may overlap at their boundaries; keep the first occurrence of
+        # each (feature, time) pair. The same feature value on different
+        # timesteps is kept here and relabeled later (in append_tracks_overlap)
+        dedup_subset = (
+            ["feature", "time"] if "time" in combined_features.columns else ["feature"]
+        )
         combined_features = combined_features.drop_duplicates(
-            subset="feature", keep="first"
+            subset=dedup_subset, keep="first"
         ).reset_index(drop=True)
     if len(mask_list) == 1:
         combined_mask = mask_list[0]
@@ -1415,6 +1420,91 @@ def _datetime_index_union(*indexes: pd.DatetimeIndex) -> pd.DatetimeIndex:
     for idx in indexes[1:]:
         result = result.union(idx)
     return result[~result.duplicated()]
+
+
+def _relabel_features_and_mask(
+    new_features: pd.DataFrame,
+    mask: xr.DataArray,
+    existing_feature_ids: set,
+    mask_time_index: pd.DatetimeIndex,
+) -> tuple[pd.DataFrame, xr.DataArray]:
+    """Relabel feature values that are duplicated on different timesteps.
+
+    Feature values in `new_features` that already occur in
+    `existing_feature_ids` (e.g. the 'feature' values of the existing tracks)
+    or earlier in `new_features` at a different timestep are distinct features
+    that merely share the same value; they are assigned fresh unique values
+    (per timestep), and the corresponding labels in `mask` at those timesteps
+    are remapped, so that afterwards every feature value is unique and matches
+    the mask labels. Feature values must be unique within each timestep.
+
+    Parameters
+    ----------
+    new_features : pd.DataFrame
+        New features (at timesteps not present in the existing tracks), with
+        'feature' and 'time' columns.
+    mask : xr.DataArray
+        Mask matching `new_features`, with time as the first dimension.
+    existing_feature_ids : set
+        Feature values that are already in use (of the existing tracks).
+    mask_time_index : pd.DatetimeIndex
+        Time coordinates of `mask` (unique).
+
+    Returns
+    -------
+    new_features : pd.DataFrame
+        Copy of `new_features` with duplicated feature values relabeled.
+    mask : xr.DataArray
+        Copy of `mask` with the labels at the relabeled timesteps remapped.
+
+    Raises
+    ------
+    ValueError
+        If `new_features` contains duplicate 'feature' values within the same
+        timestep.
+
+    """
+    new_features = new_features.copy()
+    used_ids = set(existing_feature_ids)
+    mask_max = int(mask.values.max()) if mask.values.size else 0
+    max_id = max([mask_max] + list(used_ids) + list(new_features["feature"].tolist()))
+    per_time_map = {}
+    for t, group in new_features.groupby("time"):
+        if group["feature"].duplicated().any():
+            raise ValueError(
+                f"Duplicate 'feature' values at timestep {t}; feature values "
+                "must be unique within each timestep."
+            )
+        tmap = {}
+        for fid in group["feature"].tolist():
+            if fid in used_ids:
+                max_id += 1
+                tmap[fid] = max_id
+                used_ids.add(max_id)
+            else:
+                used_ids.add(fid)
+        if tmap:
+            per_time_map[t] = tmap
+            rows = new_features.time == t
+            new_features.loc[rows, "feature"] = new_features.loc[rows, "feature"].map(
+                lambda f: tmap.get(f, f)
+            )
+    if per_time_map:
+        mask_data = np.array(mask.values, copy=True)
+        for t, tmap in per_time_map.items():
+            i = int(mask_time_index.get_loc(t))
+            lut = np.arange(int(mask_data.max()) + 1)
+            for old, new in tmap.items():
+                lut[old] = new
+            mask_data[i] = lut[mask_data[i]]
+        mask = xr.DataArray(
+            mask_data,
+            coords=mask.coords,
+            dims=mask.dims,
+            attrs=mask.attrs,
+            name=mask.name,
+        )
+    return new_features, mask
 
 
 def append_tracks_overlap(
@@ -1478,8 +1568,12 @@ def append_tracks_overlap(
         Features dataframe(s) for the future time period(s), with a 'feature'
         column and position columns ('hdim_1', 'hdim_2', and optionally
         'vdim'), as for :func:`linking_overlap`. May include rows at timesteps
-        already present in `tracks`; those are ignored. The 'feature' values
-        must be unique across `tracks` and the new `features`.
+        already present in `tracks`; those are ignored. 'feature' values may
+        be duplicated on different timesteps (e.g. reused across the separate
+        feature dataframes or already present in `tracks`); such features are
+        relabeled to fresh unique values (and the corresponding `mask` labels
+        remapped), as in :func:`append_tracks_trackpy`. Within each timestep,
+        'feature' values must be unique.
     mask : xr.DataArray or sequence of xr.DataArray
         Labeled mask(s) for the future time period(s), matching `features`.
         Must contain all timesteps of the new `features` that are not already
@@ -1538,8 +1632,8 @@ def append_tracks_overlap(
     ValueError
         If `tracks` has no 'cell' or 'feature' column, if `tracks_mask` does
         not include the last `2 + memory` timesteps of `tracks`, if the new
-        features contain timesteps that are not in `mask`, if the 'feature'
-        values are not unique across `tracks` and the new `features`, or if
+        features contain timesteps that are not in `mask`, if the new features
+        contain duplicate 'feature' values within the same timestep, or if
         `stubs` > 1 (or `time_cell_min` is set) and `tracks` does not contain
         'cell_unfiltered'.
 
@@ -1623,16 +1717,13 @@ def append_tracks_overlap(
     # Combine the original tracks with the new features (rows at timesteps
     # that are already tracked are duplicates and are filtered out)
     new_features_only = new_features[~new_features.time.isin(tracks_times)]
+    # Relabel feature values that are duplicated on different timesteps (e.g.
+    # reused in the new features while already present in tracks), remapping
+    # the corresponding mask labels, so that all feature values are unique
+    new_features_only, mask = _relabel_features_and_mask(
+        new_features_only, mask, set(tracks["feature"].tolist()), mask_time_index
+    )
     combined_features = pd.concat([tracks, new_features_only], ignore_index=True)
-    if combined_features["feature"].duplicated().any():
-        duplicates = combined_features.loc[
-            combined_features["feature"].duplicated(), "feature"
-        ].unique()
-        raise ValueError(
-            "The 'feature' values must be unique across `tracks` and the new "
-            f"`features`; found duplicates: {list(duplicates)}. Renumber the new "
-            "features, e.g. by running feature detection on the combined data."
-        )
 
     tracks_work = combined_features.copy()
     # Use the unfiltered cell numbers as the working cell column if available,

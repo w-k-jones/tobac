@@ -400,11 +400,60 @@ class TestAppendTracksOverlap:
         # mismatched list lengths
         with pytest.raises(ValueError, match="same length"):
             append_tracks_overlap(init, tracks_mask, [features, features], [mask])
-        # duplicate 'feature' values between tracks and the new features
-        dup_features = future_features.copy()
-        dup_features["feature"] = init["feature"].iloc[0]
-        with pytest.raises(ValueError, match="unique across"):
-            append_tracks_overlap(init, tracks_mask, dup_features, future_mask)
+        # exact duplicate rows (same feature and timestep) are allowed and
+        # deduplicated, as when chunks overlap at their boundaries
+        dup_features = pd.concat([future_features, future_features.iloc[[0]]])
+        appended_dup = append_tracks_overlap(
+            init, tracks_mask, dup_features, future_mask
+        )
+        appended = append_tracks_overlap(
+            init, tracks_mask, future_features, future_mask
+        )
+        assert len(appended_dup) == len(appended)
+
+    def test_append_relabels_duplicate_feature_values(self):
+        """Feature values duplicated on different timesteps (e.g. reused in the
+        new features while already present in tracks) are relabeled, and the
+        mask labels remapped, giving the same tracks as full linking."""
+        mask, features = _moving_blobs_data(n_times=6)
+        params = dict(minimum_relative_overlap=0.3)
+        full = linking_overlap(features, mask, **params)
+
+        times = pd.DatetimeIndex(features.time.unique())
+        init = linking_overlap(
+            features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
+        )
+        # new features with feature ids restarting at 1 (colliding with the
+        # tracks' feature ids 1 and 2), and a correspondingly relabeled new mask
+        new_feats = features[features.time > times[1]].copy()
+        new_mask_full = mask.isel(time=slice(2, None))
+        id_map = {fid: fid - 2 for fid in new_feats["feature"]}
+        new_feats["feature"] = new_feats["feature"].map(id_map)
+        lut = np.arange(int(new_mask_full.values.max()) + 1)
+        for old, new in id_map.items():
+            lut[old] = new
+        new_mask = xr.DataArray(
+            lut[new_mask_full.values],
+            coords=new_mask_full.coords,
+            dims=new_mask_full.dims,
+        )
+
+        appended = append_tracks_overlap(
+            init, mask.isel(time=slice(0, 2)), new_feats, new_mask, **params
+        )
+        # all feature values unique in the output; tracks ids preserved
+        assert not appended["feature"].duplicated().any()
+        assert set(init["feature"]) <= set(appended["feature"])
+
+        # same cell groupings as full tracking (compare by position, since the
+        # colliding feature ids were relabeled)
+        def cell_sigs(df):
+            return {
+                frozenset(zip(group["frame"], group["hdim_1"], group["hdim_2"]))
+                for _, group in df.groupby("cell")
+            }
+
+        assert cell_sigs(appended) == cell_sigs(full)
 
     def test_append_output_structure(self):
         mask, features = _moving_blobs_data(n_times=4)
