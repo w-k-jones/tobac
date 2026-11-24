@@ -81,6 +81,7 @@ from .tracking import (
     linking_trackpy_latlon,
     linking_overlap,
     append_tracks_trackpy,
+    append_tracks_overlap,
 )
 from .wrapper import maketrack
 from .wrapper import tracking_wrapper

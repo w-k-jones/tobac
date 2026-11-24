@@ -1,0 +1,639 @@
+"""Tests for append_tracks_overlap and the save_unfiltered_cell option of
+linking_overlap."""
+
+import numpy as np
+import pandas as pd
+import pytest
+import xarray as xr
+
+import tobac
+import tobac.testing
+from tobac.tracking.overlap import linking_overlap, append_tracks_overlap
+
+
+def _make_mask_and_features(times, blobs, grid_size=30):
+    """Build a labeled mask and matching features dataframe.
+
+    Parameters
+    ----------
+    times : list of pd.Timestamp
+        Time coordinates of the mask.
+    blobs : list of (frame_indices, row_center, col_center, half_size)
+        Each blob is labeled with consecutive feature IDs (1-based) at the
+        given frame indices, as a square of (2*half_size+1)^2 pixels centered
+        on (row_center, col_center).
+    grid_size : int
+        Size of the square horizontal grid.
+
+    Returns
+    -------
+    mask : xr.DataArray
+    features : pd.DataFrame
+    """
+    mask_data = np.zeros((len(times), grid_size, grid_size), dtype=int)
+    feature_rows = []
+    feature_id = 0
+    for frame_indices, row, col, half in blobs:
+        for frame in frame_indices:
+            feature_id += 1
+            mask_data[
+                frame, row - half : row + half + 1, col - half : col + half + 1
+            ] = feature_id
+            feature_rows.append(
+                {
+                    "feature": feature_id,
+                    "frame": frame,
+                    "time": times[frame],
+                    "hdim_1": float(row),
+                    "hdim_2": float(col),
+                }
+            )
+    mask = xr.DataArray(
+        mask_data,
+        coords={
+            "time": list(times),
+            "hdim_1": np.arange(grid_size),
+            "hdim_2": np.arange(grid_size),
+        },
+        dims=["time", "hdim_1", "hdim_2"],
+    )
+    features = pd.DataFrame(feature_rows)
+    return mask, features
+
+
+def _moving_blobs_data(n_times=6, grid_size=30):
+    """Two blobs moving at constant velocity (+1,+1) and (-1,+1) per timestep."""
+    times = pd.date_range("2024-01-01", periods=n_times, freq="h")
+    blobs = [
+        (list(range(n_times)), 5, 5, 1),
+        (list(range(n_times)), 20, 5, 1),
+    ]
+    # shift centers per frame
+    mask_data = np.zeros((n_times, grid_size, grid_size), dtype=int)
+    feature_rows = []
+    feature_id = 0
+    for f in range(n_times):
+        for dr, dc in [(1, 1), (-1, 1)]:
+            r = 5 + dr * f if dr == 1 else 20 + dr * f
+            c = 5 + dc * f
+            feature_id += 1
+            mask_data[f, r - 1 : r + 2, c - 1 : c + 2] = feature_id
+            feature_rows.append(
+                {
+                    "feature": feature_id,
+                    "frame": f,
+                    "time": times[f],
+                    "hdim_1": float(r),
+                    "hdim_2": float(c),
+                }
+            )
+    mask = xr.DataArray(
+        mask_data,
+        coords={
+            "time": times,
+            "hdim_1": np.arange(grid_size),
+            "hdim_2": np.arange(grid_size),
+        },
+        dims=["time", "hdim_1", "hdim_2"],
+    )
+    return mask, pd.DataFrame(feature_rows)
+
+
+class TestSaveUnfilteredCell:
+    def test_save_unfiltered_cell_false_by_default(self):
+        times = pd.date_range("2024-01-01", periods=3, freq="h")
+        mask, features = _make_mask_and_features(
+            times, [([0, 1, 2], 5, 5, 1), ([2], 15, 15, 1)]
+        )
+        tracks = linking_overlap(features, mask)
+        assert "cell_unfiltered" not in tracks.columns
+
+    def test_save_unfiltered_cell(self):
+        times = pd.date_range("2024-01-01", periods=3, freq="h")
+        # long blob (3 timesteps) and a single-timestep blob (stub for stubs=2)
+        mask, features = _make_mask_and_features(
+            times, [([0, 1, 2], 5, 5, 1), ([2], 15, 15, 1)]
+        )
+        tracks = linking_overlap(features, mask, stubs=2, save_unfiltered_cell=True)
+        assert "cell_unfiltered" in tracks.columns
+        # every feature gets an unfiltered cell number
+        assert (tracks.cell_unfiltered != -1).all()
+        assert tracks.cell_unfiltered.nunique() == 2
+        # the kept cell has the same number in cell and cell_unfiltered
+        kept = tracks.cell != -1
+        assert (tracks.loc[kept, "cell"] == tracks.loc[kept, "cell_unfiltered"]).all()
+        # the stub is unassigned in cell but keeps its identity in cell_unfiltered
+        stub = ~kept
+        assert (tracks.loc[stub, "cell"] == -1).all()
+        assert (tracks.loc[stub, "cell_unfiltered"] > 0).all()
+        # filtered tracking is unchanged compared to not saving the column
+        tracks_plain = linking_overlap(features, mask, stubs=2)
+        assert tobac.testing.check_tracking_identical(tracks, tracks_plain)
+
+    def test_save_unfiltered_cell_no_stubs(self):
+        times = pd.date_range("2024-01-01", periods=2, freq="h")
+        mask, features = _make_mask_and_features(times, [([0, 1], 5, 5, 1)])
+        tracks = linking_overlap(features, mask, save_unfiltered_cell=True)
+        assert (tracks.cell == tracks.cell_unfiltered).all()
+
+    def test_save_unfiltered_cell_unmatched_features_get_unique_ids(self):
+        # two features that never overlap anything: both unassigned in cell,
+        # but with distinct cell_unfiltered numbers
+        times = pd.date_range("2024-01-01", periods=2, freq="h")
+        mask, features = _make_mask_and_features(
+            times, [([0], 5, 5, 1), ([1], 20, 20, 1)]
+        )
+        tracks = linking_overlap(features, mask, save_unfiltered_cell=True)
+        assert (tracks.cell == -1).all()
+        assert tracks.cell_unfiltered.nunique() == 2
+        assert (tracks.cell_unfiltered > 0).all()
+
+
+class TestAppendTracksOverlap:
+    def test_append_equals_full_linking_2d(self):
+        mask, features = _moving_blobs_data(n_times=6)
+        params = dict(minimum_relative_overlap=0.3)
+        full = linking_overlap(features, mask, **params)
+
+        times = pd.DatetimeIndex(features.time.unique())
+        init_mask = mask.isel(time=slice(0, 2))
+        init_features = features[features.time <= times[1]]
+        init = linking_overlap(init_features, init_mask, **params)
+
+        # append everything at once
+        appended = append_tracks_overlap(init, features, mask, **params)
+        assert len(appended) == len(features)
+        assert tobac.testing.check_tracking_identical(full, appended)
+
+    def test_append_one_timestep_at_a_time(self):
+        mask, features = _moving_blobs_data(n_times=6)
+        params = dict(minimum_relative_overlap=0.3)
+        full = linking_overlap(features, mask, **params)
+
+        times = pd.DatetimeIndex(features.time.unique())
+        init = linking_overlap(
+            features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
+        )
+        curr = init
+        for i in range(2, len(times)):
+            # pass only the new timestep's features, but a mask that includes
+            # the boundary timestep(s) of the existing tracks
+            curr = append_tracks_overlap(
+                curr,
+                features[features.time == times[i]],
+                mask.isel(time=slice(0, i + 1)),
+                **params,
+            )
+        assert tobac.testing.check_tracking_identical(full, curr)
+
+    def test_append_list_of_periods(self):
+        mask, features = _moving_blobs_data(n_times=6)
+        params = dict(minimum_relative_overlap=0.3)
+        full = linking_overlap(features, mask, **params)
+
+        times = pd.DatetimeIndex(features.time.unique())
+        init = linking_overlap(
+            features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
+        )
+        # append two future periods as lists of (features, mask)
+        feats_list = [features[features.time == times[i]] for i in (2, 3)]
+        mask_list = [mask.isel(time=slice(0, 3)), mask.isel(time=slice(0, 4))]
+        appended = append_tracks_overlap(init, feats_list, mask_list, **params)
+        assert tobac.testing.check_tracking_identical(
+            linking_overlap(
+                features[features.time <= times[3]],
+                mask.isel(time=slice(0, 4)),
+                **params,
+            ),
+            appended,
+        )
+
+    def test_append_predict(self):
+        mask, features = _moving_blobs_data(n_times=6)
+        params = dict(
+            minimum_relative_overlap=0.3,
+            translate_method="predict",
+            velocity_method="nearest",
+        )
+        full = linking_overlap(features, mask, **params)
+        times = pd.DatetimeIndex(features.time.unique())
+        init = linking_overlap(
+            features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
+        )
+        appended = append_tracks_overlap(init, features, mask, **params)
+        assert tobac.testing.check_tracking_identical(full, appended)
+
+    def test_append_predict_stubs_requires_unfiltered(self):
+        mask, features = _moving_blobs_data(n_times=6)
+        params = dict(
+            minimum_relative_overlap=0.3,
+            stubs=3,
+            translate_method="predict",
+            velocity_method="mean",
+        )
+        times = pd.DatetimeIndex(features.time.unique())
+        init = linking_overlap(
+            features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
+        )
+        with pytest.raises(ValueError, match="save_unfiltered_cell=True"):
+            append_tracks_overlap(init, features, mask, **params)
+
+        # with the unfiltered cell numbers saved, appending works and matches
+        # full tracking
+        init_u = linking_overlap(
+            features[features.time <= times[1]],
+            mask.isel(time=slice(0, 2)),
+            save_unfiltered_cell=True,
+            **params,
+        )
+        full_u = linking_overlap(features, mask, save_unfiltered_cell=True, **params)
+        appended = append_tracks_overlap(init_u, features, mask, **params)
+        assert "cell_unfiltered" in appended.columns
+        assert tobac.testing.check_tracking_identical(full_u, appended)
+        assert tobac.testing.check_tracking_identical(
+            full_u, appended, cell_column="cell_unfiltered"
+        )
+
+    def test_append_memory(self):
+        # blob present at t=0, missing at t=1, present again at t=2
+        times = pd.date_range("2024-01-01", periods=3, freq="h")
+        mask, features = _make_mask_and_features(
+            times, [([0], 5, 5, 1), ([2], 5, 5, 1)]
+        )
+        params = dict(memory=1)
+        full = linking_overlap(features, mask, **params)
+        assert full.cell.tolist() == [1, 1]
+
+        init = linking_overlap(
+            features[features.time <= times[0]], mask.isel(time=slice(0, 1)), **params
+        )
+        appended = append_tracks_overlap(init, features, mask, **params)
+        assert tobac.testing.check_tracking_identical(full, appended)
+        assert appended.cell.tolist() == [1, 1]
+
+    def test_append_memory_stepwise(self):
+        """Chained appends one timestep at a time with memory across an empty
+        timestep reproduce full tracking."""
+        times = pd.date_range("2024-01-01", periods=4, freq="h")
+        # blob at t=0 and t=2 only (t=1 and t=3 empty)
+        mask, features = _make_mask_and_features(
+            times, [([0], 5, 5, 1), ([2], 5, 5, 1)]
+        )
+        params = dict(memory=1)
+        full = linking_overlap(features, mask, **params)
+        assert full.cell.tolist() == [1, 1]
+
+        init = linking_overlap(
+            features[features.time <= times[0]], mask.isel(time=slice(0, 1)), **params
+        )
+        curr = init
+        for i in range(1, len(times)):
+            curr = append_tracks_overlap(
+                curr,
+                features[features.time == times[i]],
+                mask.isel(time=slice(0, i + 1)),
+                **params,
+            )
+        assert tobac.testing.check_tracking_identical(full, curr)
+        assert curr.cell.tolist() == [1, 1]
+
+    def test_append_max_time_gap(self):
+        times = pd.to_datetime(
+            ["2024-01-01 00:00", "2024-01-01 01:00", "2024-01-01 05:00"]
+        )
+        mask, features = _make_mask_and_features(times, [([0, 1, 2], 5, 5, 1)])
+        params = dict(max_time_gap=pd.Timedelta("2h"))
+        full = linking_overlap(features, mask, **params)
+        assert full.cell.tolist() == [1, 1, -1]
+
+        init = linking_overlap(
+            features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
+        )
+        appended = append_tracks_overlap(init, features, mask, **params)
+        assert tobac.testing.check_tracking_identical(full, appended)
+        assert appended.cell.tolist() == [1, 1, -1]
+
+    def test_append_errors(self):
+        mask, features = _moving_blobs_data(n_times=4)
+        times = pd.DatetimeIndex(features.time.unique())
+        init = linking_overlap(
+            features[features.time <= times[1]], mask.isel(time=slice(0, 2))
+        )
+        # tracks without a cell column
+        with pytest.raises(ValueError, match="cell"):
+            append_tracks_overlap(features, features, mask)
+        # mask does not include the last timestep of tracks
+        with pytest.raises(ValueError, match="last timestep"):
+            append_tracks_overlap(
+                init, features[features.time == times[2]], mask.isel(time=[2])
+            )
+        # new features at a timestep not in the mask
+        with pytest.raises(ValueError, match="not in the mask"):
+            append_tracks_overlap(init, features, mask.isel(time=slice(0, 3)))
+        # mismatched list lengths
+        with pytest.raises(ValueError, match="same length"):
+            append_tracks_overlap(init, [features, features], [mask])
+
+    def test_append_output_structure(self):
+        mask, features = _moving_blobs_data(n_times=4)
+        times = pd.DatetimeIndex(features.time.unique())
+        init = linking_overlap(
+            features[features.time <= times[1]], mask.isel(time=slice(0, 2))
+        )
+        appended = append_tracks_overlap(init, features, mask)
+        # no internal columns left behind
+        for col in appended.columns:
+            assert not col.startswith("_")
+        assert "cell" in appended.columns
+        assert "time_cell" in appended.columns
+        assert len(appended) == len(features)
+        # time_cell is set correctly
+        for cell_id, group in appended.groupby("cell"):
+            if cell_id == -1:
+                assert group.time_cell.isna().all()
+            else:
+                assert group.time_cell.min() == pd.Timedelta(0)
+
+    def test_append_3d(self):
+        """3D version of the append test."""
+        n_times = 4
+        grid = 30
+        times = pd.date_range("2024-01-01", periods=n_times, freq="h")
+        mask_data = np.zeros((n_times, 5, grid, grid), dtype=int)
+        rows = []
+        fid = 0
+        for f in range(n_times):
+            r, c = 5 + f, 5 + f
+            fid += 1
+            mask_data[f, 1:3, r - 1 : r + 2, c - 1 : c + 2] = fid
+            rows.append(
+                dict(
+                    feature=fid,
+                    frame=f,
+                    time=times[f],
+                    vdim=1.5,
+                    hdim_1=float(r),
+                    hdim_2=float(c),
+                )
+            )
+        mask = xr.DataArray(
+            mask_data,
+            coords={
+                "time": times,
+                "vdim": np.arange(5),
+                "hdim_1": np.arange(grid),
+                "hdim_2": np.arange(grid),
+            },
+            dims=["time", "vdim", "hdim_1", "hdim_2"],
+        )
+        features = pd.DataFrame(rows)
+        params = dict(minimum_relative_overlap=0.3)
+        full = linking_overlap(features, mask, vertical_coord="vdim", **params)
+        times_u = pd.DatetimeIndex(features.time.unique())
+        init = linking_overlap(
+            features[features.time <= times_u[1]],
+            mask.isel(time=slice(0, 2)),
+            vertical_coord="vdim",
+            **params,
+        )
+        appended = append_tracks_overlap(
+            init, features, mask, vertical_coord="vdim", **params
+        )
+        assert tobac.testing.check_tracking_identical(full, appended)
+
+    def test_append_sample_data_3blobs(self):
+        """Append tracking on the sample 2D 3-blobs data matches full tracking."""
+        data = tobac.testing.make_sample_data_2D_3blobs(data_type="xarray").isel(
+            time=slice(0, 20)
+        )
+        dxy = 1000
+        labels, features = tobac.feature_detection_multithreshold(
+            data,
+            dxy,
+            threshold=5,
+            position_threshold="weighted_abs",
+            return_labels=True,
+        )
+        params = dict(
+            minimum_relative_overlap=0.5,
+            translate_method="predict",
+            velocity_method="nearest",
+        )
+        full = linking_overlap(features, labels, **params)
+
+        times = pd.DatetimeIndex(labels.time.values)
+        split = 8
+        init = linking_overlap(
+            features[features.time <= times[split - 1]],
+            labels.isel(time=slice(0, split)),
+            **params,
+        )
+        appended = append_tracks_overlap(init, features, labels, **params)
+        assert tobac.testing.check_tracking_identical(full, appended)
+
+        # append one timestep at a time
+        curr = init
+        for i in range(split, len(times)):
+            curr = append_tracks_overlap(
+                curr,
+                features[features.time == times[i]],
+                labels.isel(time=slice(0, i + 1)),
+                **params,
+            )
+        assert tobac.testing.check_tracking_identical(full, curr)
+
+    def test_append_sample_data_3blobs_pbc(self):
+        """Append tracking with periodic boundaries and prediction matches full
+        tracking."""
+        data_pbc = tobac.testing.make_sample_data_2D_3blobs(data_type="xarray").roll(
+            x=50
+        )
+        dxy = 1000
+        labels, features = tobac.feature_detection_multithreshold(
+            data_pbc,
+            dxy,
+            threshold=5,
+            position_threshold="weighted_abs",
+            return_labels=True,
+            PBC_flag="hdim_2",
+        )
+        params = dict(
+            minimum_relative_overlap=0.5,
+            translate_method="predict",
+            velocity_method="nearest",
+            PBC_flag="hdim_2",
+        )
+        full = linking_overlap(features, labels, **params)
+        assert np.unique(full.cell).tolist() == [1, 2, 3]
+
+        times = pd.DatetimeIndex(labels.time.values)
+        split = 50
+        init = linking_overlap(
+            features[features.time <= times[split - 1]],
+            labels.isel(time=slice(0, split)),
+            **params,
+        )
+        appended = append_tracks_overlap(init, features, labels, **params)
+        assert tobac.testing.check_tracking_identical(full, appended)
+        assert np.unique(appended.cell).tolist() == [1, 2, 3]
+
+    def test_append_pbc_wrapped_blob(self):
+        """Append tracking of a blob crossing the periodic boundary in hdim_2."""
+        grid = 20
+        times = pd.date_range("2024-01-01", periods=3, freq="h")
+        mask_data = np.zeros((3, grid, grid), dtype=int)
+        rows = []
+        centers = [(10, 18), (10, 19), (10, 0)]
+        for f, (r, c) in enumerate(centers):
+            fid = f + 1
+            cols = (c + np.arange(-1, 2)) % grid
+            mask_data[f, r, cols] = fid
+            rows.append(
+                {
+                    "feature": fid,
+                    "frame": f,
+                    "time": times[f],
+                    "hdim_1": float(r),
+                    "hdim_2": float(c % grid),
+                }
+            )
+        mask = xr.DataArray(
+            mask_data,
+            coords={
+                "time": times,
+                "hdim_1": np.arange(grid),
+                "hdim_2": np.arange(grid),
+            },
+            dims=["time", "hdim_1", "hdim_2"],
+        )
+        features = pd.DataFrame(rows)
+        params = dict(PBC_flag="hdim_2", minimum_relative_overlap=0.3)
+        full = linking_overlap(features, mask, **params)
+        assert full.cell.tolist() == [1, 1, 1]
+
+        init = linking_overlap(
+            features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
+        )
+        appended = append_tracks_overlap(init, features, mask, **params)
+        assert appended.cell.tolist() == [1, 1, 1]
+        assert tobac.testing.check_tracking_identical(full, appended)
+
+    def test_append_unmatched_boundary_feature(self):
+        """A feature at the last timestep of the original tracks that was never
+        matched there can still be linked in the new period, as in full tracking."""
+        times = pd.date_range("2024-01-01", periods=3, freq="h")
+        # blob A at (5,5) for all 3 timesteps; blob B at (15,15) at t=0 and t=2
+        # only: B never overlaps anything at t=1, and at t=0 it is unmatched
+        mask, features = _make_mask_and_features(
+            times, [([0, 1, 2], 5, 5, 1), ([0], 15, 15, 1), ([2], 15, 15, 1)]
+        )
+        params = dict()
+        full = linking_overlap(features, mask, **params)
+        # blob A tracked as one cell; blob B features unmatched (no overlap with
+        # anything at their own timesteps... actually B at t=0 and t=2 are far
+        # apart in time but same place - with memory=0 they don't link)
+        init = linking_overlap(
+            features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
+        )
+        appended = append_tracks_overlap(init, features, mask, **params)
+        assert tobac.testing.check_tracking_identical(full, appended)
+
+    def test_append_stubs_requires_unfiltered(self):
+        """Append with stubs > 1 requires tracks saved with
+        save_unfiltered_cell=True; with it, append reproduces full tracking."""
+        mask, features = _moving_blobs_data(n_times=6)
+        params = dict(minimum_relative_overlap=0.3, stubs=3)
+        full = linking_overlap(features, mask, **params)
+        times = pd.DatetimeIndex(features.time.unique())
+        init = linking_overlap(
+            features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
+        )
+        # without the unfiltered cell numbers, appending raises
+        with pytest.raises(ValueError, match="save_unfiltered_cell=True"):
+            append_tracks_overlap(init, features, mask, **params)
+
+        # with the unfiltered cell numbers, appending reproduces full tracking
+        full_u = linking_overlap(features, mask, save_unfiltered_cell=True, **params)
+        init_u = linking_overlap(
+            features[features.time <= times[1]],
+            mask.isel(time=slice(0, 2)),
+            save_unfiltered_cell=True,
+            **params,
+        )
+        appended = append_tracks_overlap(init_u, features, mask, **params)
+        assert "cell_unfiltered" in appended.columns
+        assert tobac.testing.check_tracking_identical(full_u, appended)
+        assert tobac.testing.check_tracking_identical(
+            full_u, appended, cell_column="cell_unfiltered"
+        )
+        # filtered cells match the full run as well
+        assert tobac.testing.check_tracking_identical(full, appended)
+
+    def test_append_time_cell_min(self):
+        times = pd.date_range("2024-01-01", periods=4, freq="h")
+        mask, features = _make_mask_and_features(
+            times,
+            [([0, 1, 2, 3], 5, 5, 1), ([2, 3], 15, 15, 1)],
+        )
+        params = dict(time_cell_min=pd.Timedelta("2h"))
+        full = linking_overlap(features, mask, **params)
+        # the short blob (1 h span) is filtered
+        assert full.set_index("feature").cell.to_dict() == {
+            1: 1,
+            2: 1,
+            3: 1,
+            4: 1,
+            5: -1,
+            6: -1,
+        }
+        init = linking_overlap(
+            features[features.time <= times[1]], mask.isel(time=slice(0, 2)), **params
+        )
+        # time_cell_min filtering also requires the unfiltered cell numbers
+        with pytest.raises(ValueError, match="save_unfiltered_cell=True"):
+            append_tracks_overlap(init, features, mask, **params)
+
+        full_u = linking_overlap(features, mask, save_unfiltered_cell=True, **params)
+        init_u = linking_overlap(
+            features[features.time <= times[1]],
+            mask.isel(time=slice(0, 2)),
+            save_unfiltered_cell=True,
+            **params,
+        )
+        appended = append_tracks_overlap(init_u, features, mask, **params)
+        assert tobac.testing.check_tracking_identical(full_u, appended)
+        assert appended.set_index("feature").cell.to_dict() == {
+            1: 1,
+            2: 1,
+            3: 1,
+            4: 1,
+            5: -1,
+            6: -1,
+        }
+
+    def test_append_crossing_blobs_memory_predict(self):
+        """Append with memory and predictive tracking on crossing blobs matches
+        full tracking (both blobs cross over)."""
+        data = tobac.testing.make_sample_data_3D_2crossing_blobs_xarray()
+        dxy = 1000
+        features = tobac.feature_detection_multithreshold(
+            data, dxy, threshold=8, position_threshold="weighted_abs"
+        )
+        labels, features = tobac.segmentation.watershed_segmentation.segmentation(
+            features, data, dxy, threshold=8
+        )
+        params = dict(memory=1, translate_method="predict", velocity_method="nearest")
+        full = linking_overlap(features, labels, **params)
+        # both blobs tracked continuously and cross over
+        assert np.unique(full.cell).tolist() == [1, 2]
+
+        times = pd.DatetimeIndex(labels.time.values)
+        split = 10
+        init = linking_overlap(
+            features[features.time <= times[split - 1]],
+            labels.isel(time=slice(0, split)),
+            **params,
+        )
+        appended = append_tracks_overlap(init, features, labels, **params)
+        assert tobac.testing.check_tracking_identical(full, appended)
+        assert np.unique(appended.cell).tolist() == [1, 2]

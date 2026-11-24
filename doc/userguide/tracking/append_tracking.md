@@ -142,6 +142,34 @@ When `use_latlon=True`, a few parameters are slightly different than when `use_l
 
 ---
 
+(append-tracking-overlap)=
+### Appending to Overlap Tracks
+
+If your original tracks were created with {func}`tobac.tracking.linking_overlap` (see {doc}`overlap_tracking`), use {func}`tobac.tracking.append_tracks_overlap` to continue tracking with new features and segmentation masks. Because overlap linking needs the labeled regions of the features at the boundary between the two periods, the `mask` passed to `append_tracks_overlap` must include the last timestep of `tracks` (and, for `memory > 0`, the preceding `memory` timesteps of `tracks`). The `features` and `mask` arguments may each be a single object or a list of objects (one per future time period); lists are combined before tracking. Only timesteps not already present in `tracks` are newly tracked.
+
+```python
+import tobac
+
+# --- Step 1: initial overlap tracking run on the first batch ---
+tracks_batch1 = tobac.tracking.linking_overlap(
+    features=features_batch1,
+    mask=labels_batch1,
+    save_unfiltered_cell=True,  # needed if stubs > 1 or time_cell_min is set
+)
+
+# --- Step 2: new data arrives (features and labels for the new period,
+#            including the last timestep of batch 1 in the mask) ---
+tracks_extended = tobac.tracking.append_tracks_overlap(
+    tracks=tracks_batch1,
+    features=features_batch2,
+    mask=labels_batch2_with_boundary,
+)
+```
+
+The appended result is identical to running {func}`tobac.tracking.linking_overlap` on the full dataset at once (precise cell numbers may differ, but all tracks are identical), and existing `cell` IDs are preserved. If `tracks` contains a `cell_unfiltered` column (saved with `save_unfiltered_cell=True` in {func}`tobac.tracking.linking_overlap`), the appended result contains it as well, and it is required when `stubs > 1` or `time_cell_min` is set, as cells filtered out in the original tracks would otherwise lose their identity at the boundary.
+
+---
+
 
 ## Common Errors and How to Fix Them
 
@@ -173,4 +201,6 @@ When `use_latlon=True`, a few parameters are slightly different than when `use_l
 
 - {func}`tobac.tracking.linking_trackpy` — the standard (non-append) trajectory linker
 - {func}`tobac.tracking.linking_trackpy_latlon` — trajectory linker for lat/lon data
+- {func}`tobac.tracking.append_tracks_overlap` — append tracking for overlap-based tracks (see {ref}`append-tracking-overlap`)
 - {doc}`lat_lon_tracking` — user guide page on latitude/longitude tracking
+- {doc}`overlap_tracking` — user guide page on overlap tracking

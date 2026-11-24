@@ -112,6 +112,7 @@ For 3D data, the `mask` has an additional vertical dimension and the features ha
 
 - `cell`: integer identifier of the tracked cell each feature belongs to. Features that are not linked into any cell are assigned `cell_number_unassigned` (default -1).
 - `time_cell`: time since the start of the cell, as a `pandas.Timedelta`; `NaT` for unassigned features.
+- `cell_unfiltered` (only with `save_unfiltered_cell=True`): the cell numbers from before stub filtering (see `stubs` and `time_cell_min`). Every feature gets an unfiltered cell number, so cells filtered out as stubs keep their identity; this is required to append new data to the tracks with {py:func}`tobac.tracking.append_tracks_overlap` when `stubs > 1` or `time_cell_min` is set (see {ref}`append-tracking-overlap`).
 
 ## Examples
 
@@ -119,6 +120,7 @@ A worked example of overlap tracking, including the effect of the different para
 
 ## See Also
 
+- {py:func}`tobac.tracking.append_tracks_overlap` — continue overlap tracking of existing tracks with new features and masks (see {ref}`append-tracking-overlap`)
 - {py:func}`tobac.tracking.linking_trackpy` — centroid-based linking using trackpy
 - {py:func}`tobac.tracking.linking_trackpy_latlon` — centroid-based linking for latitude/longitude data (see {doc}`lat_lon_tracking`)
 - {doc}`tracking_output` — description of the tracking output variables
