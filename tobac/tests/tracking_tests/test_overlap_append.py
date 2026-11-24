@@ -910,3 +910,117 @@ class TestUnlabeledFeatures:
         assert cell_by_feature[99] == -1
         assert cell_by_feature[98] == -1
         assert tobac.testing.check_tracking_identical(full, appended)
+
+
+def _as_geodataframe(features, geom_col="geometry"):
+    """Convert a features dataframe to a GeoDataFrame with point geometries
+    at (hdim_1, hdim_2) and a CRS."""
+    gpd = pytest.importorskip("geopandas")
+    gdf = gpd.GeoDataFrame(
+        features.copy(),
+        geometry=gpd.points_from_xy(features.hdim_1, features.hdim_2),
+        crs="EPSG:4326",
+    )
+    if geom_col != "geometry":
+        gdf = gdf.rename_geometry(geom_col)
+    return gdf
+
+
+def _check_geodataframe(tracks, expected_features, geom_col="geometry"):
+    """Check that tracks is a GeoDataFrame maintaining the geometries (in row
+    order) and CRS of expected_features."""
+    gpd = pytest.importorskip("geopandas")
+    assert isinstance(tracks, gpd.GeoDataFrame)
+    assert tracks.geometry.name == geom_col
+    assert str(tracks.crs) == str(expected_features.crs)
+    assert len(tracks) == len(expected_features)
+    for g_out, g_exp in zip(tracks.geometry, expected_features.geometry):
+        assert g_out.equals(g_exp)
+
+
+class TestGeoDataFrameInput:
+    """If the input features is a GeoDataFrame, the output tracks must also be
+    a GeoDataFrame maintaining the input geometries (and CRS)."""
+
+    def test_linking_overlap_geodataframe(self):
+        mask, features = _moving_blobs_data(n_times=6)
+        gdf = _as_geodataframe(features)
+        tracks = linking_overlap(gdf, mask)
+        _check_geodataframe(tracks, gdf)
+        # same with the unfiltered cell column
+        tracks_u = linking_overlap(gdf, mask, stubs=2, save_unfiltered_cell=True)
+        _check_geodataframe(tracks_u, gdf)
+        assert "cell_unfiltered" in tracks_u.columns
+
+    def test_linking_overlap_plain_dataframe_stays_plain(self):
+        mask, features = _moving_blobs_data(n_times=4)
+        tracks = linking_overlap(features, mask)
+        assert type(tracks) is pd.DataFrame
+
+    def test_linking_overlap_custom_geometry_column(self):
+        mask, features = _moving_blobs_data(n_times=4)
+        gdf = _as_geodataframe(features, geom_col="geom")
+        tracks = linking_overlap(gdf, mask)
+        _check_geodataframe(tracks, gdf, geom_col="geom")
+
+    def test_append_tracks_overlap_geodataframe(self):
+        mask, features = _moving_blobs_data(n_times=6)
+        gdf = _as_geodataframe(features)
+        times = pd.DatetimeIndex(gdf.time.unique())
+        params = dict(translate_method="predict", velocity_method="nearest")
+        full = linking_overlap(gdf, mask, **params)
+        _check_geodataframe(full, gdf)
+        init = linking_overlap(
+            gdf[gdf.time <= times[1]], mask.isel(time=slice(0, 2)), **params
+        )
+        new = gdf[gdf.time > times[1]]
+        appended = append_tracks_overlap(
+            init,
+            mask.isel(time=slice(0, 2)),
+            new,
+            mask.isel(time=slice(2, None)),
+            **params,
+        )
+        _check_geodataframe(appended, gdf)
+        assert tobac.testing.check_tracking_identical(full, appended)
+
+    def test_append_tracks_overlap_geodataframe_list_of_periods(self):
+        mask, features = _moving_blobs_data(n_times=6)
+        gdf = _as_geodataframe(features)
+        times = pd.DatetimeIndex(gdf.time.unique())
+        init = linking_overlap(gdf[gdf.time <= times[1]], mask.isel(time=slice(0, 2)))
+        new = gdf[gdf.time > times[1]]
+        appended = append_tracks_overlap(
+            init,
+            mask.isel(time=slice(0, 2)),
+            [new[new.time <= times[3]], new[new.time > times[3]]],
+            [mask.isel(time=slice(2, 4)), mask.isel(time=slice(4, None))],
+        )
+        _check_geodataframe(appended, gdf)
+
+    def test_append_tracks_overlap_plain_tracks_geodataframe_features(self):
+        """GeoDataFrame new features with plain-DataFrame tracks still give a
+        GeoDataFrame output; the new features keep their geometries, the
+        original track rows get missing geometry."""
+        gpd = pytest.importorskip("geopandas")
+        mask, features = _moving_blobs_data(n_times=6)
+        gdf = _as_geodataframe(features)
+        times = pd.DatetimeIndex(gdf.time.unique())
+        plain = pd.DataFrame(gdf[gdf.time <= times[1]].drop(columns="geometry"))
+        init = linking_overlap(plain, mask.isel(time=slice(0, 2)))
+        assert type(init) is pd.DataFrame
+        new = gdf[gdf.time > times[1]]
+        appended = append_tracks_overlap(
+            init,
+            mask.isel(time=slice(0, 2)),
+            new,
+            mask.isel(time=slice(2, None)),
+        )
+        assert isinstance(appended, gpd.GeoDataFrame)
+        assert str(appended.crs) == str(gdf.crs)
+        assert len(appended) == len(gdf)
+        # rows of the original (plain) tracks have no geometry
+        assert appended.geometry.iloc[: len(init)].isna().all()
+        # rows of the new features keep their input geometries
+        for g_out, g_exp in zip(appended.geometry.iloc[len(init) :], new.geometry):
+            assert g_out.equals(g_exp)

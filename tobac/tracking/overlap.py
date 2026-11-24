@@ -929,6 +929,44 @@ def _filter_labeled_features(features: pd.DataFrame) -> pd.DataFrame:
     return features[features["_count"].notna()]
 
 
+def _ensure_geodataframe(df: pd.DataFrame, *sources: pd.DataFrame) -> pd.DataFrame:
+    """Return `df` as a GeoDataFrame if any of `sources` is one.
+
+    If `df` is already a GeoDataFrame (or geopandas is not installed, or none
+    of `sources` is a GeoDataFrame), it is returned unchanged. Otherwise the
+    geometry column of the first GeoDataFrame source that is present in `df`
+    is set as the active geometry (with that source's CRS), so that the input
+    geometries are maintained. Rows of `df` without a corresponding geometry
+    (e.g. rows originating from a plain-DataFrame source) get missing geometry.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Dataframe to convert, e.g. a tracks output.
+    *sources : pd.DataFrame
+        Input features dataframe(s); if any is a GeoDataFrame, `df` is
+        converted to a GeoDataFrame.
+
+    Returns
+    -------
+    pd.DataFrame or geopandas.GeoDataFrame
+        `df`, as a GeoDataFrame if any source is one.
+
+    """
+    try:
+        import geopandas as gpd
+    except ImportError:
+        return df
+    if isinstance(df, gpd.GeoDataFrame):
+        return df
+    for src in sources:
+        if isinstance(src, gpd.GeoDataFrame):
+            geom_col = src.geometry.name
+            if geom_col in df.columns:
+                return gpd.GeoDataFrame(df, geometry=geom_col, crs=src.crs)
+    return df
+
+
 def linking_overlap(
     features: pd.DataFrame,
     mask: xr.DataArray,
@@ -959,7 +997,9 @@ def linking_overlap(
     ----------
     features : pd.DataFrame
         Features dataframe with 'feature' index and position columns
-        ('hdim_1', 'hdim_2', and optionally 'vdim').
+        ('hdim_1', 'hdim_2', and optionally 'vdim'). If `features` is a
+        GeoDataFrame (requires geopandas), the output is also a GeoDataFrame
+        and the input geometries are preserved.
     mask : xr.DataArray
         Time series of labeled feature masks with coordinates matching features.
     stubs : int, optional
@@ -1035,6 +1075,8 @@ def linking_overlap(
         Features whose 'feature' value has no corresponding label in `mask`
         can never be linked; they are kept in the output with
         cell_number_unassigned.
+        If `features` is a GeoDataFrame, the output is a GeoDataFrame with the
+        input geometries (and CRS) preserved.
 
     """
     tracks = features.copy().set_index("feature")
@@ -1086,6 +1128,10 @@ def linking_overlap(
     # Reset index to match features input and replace features column in the correct location
     tracks = tracks.set_index(features.index)
     tracks.insert(features.columns.get_loc("feature"), "feature", features.feature)
+
+    # keep the output a GeoDataFrame with the input geometries if the input
+    # features is one
+    tracks = _ensure_geodataframe(tracks, features)
 
     return tracks
 
@@ -1589,6 +1635,8 @@ def append_tracks_overlap(
         :func:`linking_overlap`), the unfiltered cell numbers are used to
         link the new features, so that cells filtered out as stubs in `tracks`
         keep their identity; the output then also contains 'cell_unfiltered'.
+        If `tracks` or `features` is a GeoDataFrame (requires geopandas), the
+        output is also a GeoDataFrame and the input geometries are preserved.
     tracks_mask : xr.DataArray or sequence of xr.DataArray
         Labeled mask(s) for the (end of the) original time period of `tracks`,
         used to recalculate the initial centroids and velocities of the
@@ -1661,6 +1709,9 @@ def append_tracks_overlap(
         :func:`linking_overlap`. Features whose 'feature' value has no
         corresponding label in `tracks_mask` or `mask` can never be linked;
         they are kept in the output with cell_number_unassigned.
+        If `tracks` or `features` is a GeoDataFrame, the output is a
+        GeoDataFrame with the input geometries (and CRS) preserved; rows
+        originating from a plain-DataFrame input get missing geometry.
 
     Raises
     ------
@@ -1759,6 +1810,11 @@ def append_tracks_overlap(
         new_features_only, mask, set(tracks["feature"].tolist()), mask_time_index
     )
     combined_features = pd.concat([tracks, new_features_only], ignore_index=True)
+    # keep the combined features a GeoDataFrame with the input geometries if
+    # the tracks or the new features are one
+    combined_features = _ensure_geodataframe(
+        combined_features, tracks, new_features_only
+    )
 
     tracks_work = combined_features.copy()
     # Use the unfiltered cell numbers as the working cell column if available,
@@ -1907,5 +1963,9 @@ def append_tracks_overlap(
         "feature",
         combined_features.feature,
     )
+
+    # keep the output a GeoDataFrame with the input geometries if the tracks
+    # or the new features are one
+    tracks_work = _ensure_geodataframe(tracks_work, combined_features)
 
     return tracks_work
